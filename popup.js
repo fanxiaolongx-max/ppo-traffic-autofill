@@ -274,6 +274,14 @@ function bindEvents() {
     handleTriggerAction(false);
   });
 
+  // 彻底清除埃及官网 Session / Cookie / 缓存痕迹并重置全新会话
+  document.getElementById('ppo-btn-clean-traces')?.addEventListener('click', () => {
+    showToast('⏳ 正在抹除埃及官网历史会话...');
+    chrome.runtime.sendMessage({ action: 'clean_site_traces' }, () => {
+      showToast('🧹 已抹除全部会话 Cookie，重置为全新状态！');
+    });
+  });
+
   // 清空按钮
   document.getElementById('ppo-btn-clear')?.addEventListener('click', () => {
     clearForm();

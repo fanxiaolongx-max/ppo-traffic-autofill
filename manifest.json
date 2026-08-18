@@ -9,7 +9,9 @@
     "activeTab",
     "scripting",
     "notifications",
-    "alarms"
+    "alarms",
+    "cookies",
+    "browsingData"
   ],
   "host_permissions": [
     "*://www.ppo.gov.eg/*",

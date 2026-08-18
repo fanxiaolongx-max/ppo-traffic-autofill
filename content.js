@@ -801,11 +801,36 @@
     doFillOperations(data, autoSubmit);
   }
 
+  // 清理当前页面内的所有 Session/LocalStorage/Cookie 访问痕迹
+  function purgeSiteSessionAndTraces() {
+    try {
+      sessionStorage.clear();
+      localStorage.clear();
+      const cookies = document.cookie.split(";");
+      cookies.forEach(c => {
+        const eqPos = c.indexOf("=");
+        const name = eqPos > -1 ? c.substr(0, eqPos).trim() : c.trim();
+        if (name) {
+          document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.ppo.gov.eg";
+          document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+        }
+      });
+    } catch (e) {}
+
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: 'clean_site_traces' });
+      }
+    } catch (e) {}
+  }
+
   // 自动返回查询页面并在加载完成后重新执行填入与查询
   function navigateBackAndRequery(data, autoSubmit) {
-    showToast('🔄 检测到当前在结果页，正在自动返回查询页面...', false);
+    showToast('🔄 检测到当前在结果页，正在清除旧会话并开启全新查询...', false);
+    purgeSiteSessionAndTraces();
 
-    // 将新的查询任务保存到浏览器全局存储中
+    const cleanUrl = TARGET_PPO_URL + '?clear=201,14,RP';
+
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({
         pendingPpoTask: {
@@ -814,20 +839,10 @@
           timestamp: Date.now()
         }
       }, () => {
-        // 优先查找页面上的「رجوع (返回)」或「بحث جديد (新查询)」按钮进行平滑回退
-        const backBtn = Array.from(document.querySelectorAll('button, a, input[type="button"]')).find(el => 
-          el.innerText && (el.innerText.includes('رجوع') || el.innerText.includes('بحث جديد'))
-        );
-
-        if (backBtn && typeof backBtn.click === 'function') {
-          backBtn.click();
-        } else {
-          // 若按钮不存在，直接跳转回官方查询主地址
-          window.location.href = TARGET_PPO_URL;
-        }
+        window.location.href = cleanUrl;
       });
     } else {
-      window.location.href = TARGET_PPO_URL;
+      window.location.href = cleanUrl;
     }
   }
 

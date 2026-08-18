@@ -27,7 +27,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  if (message.action === 'clean_site_traces') {
+    cleanAllSiteTracesAndCookies().then(() => {
+      if (sendResponse) sendResponse({ success: true });
+    });
+    return true;
+  }
 });
+
+// 全面清理该站点的 Cookie、Session 和本地缓存痕迹 (清除 APEX 历史会话死锁)
+async function cleanAllSiteTracesAndCookies() {
+  try {
+    if (chrome.cookies) {
+      const domains = ['.ppo.gov.eg', 'www.ppo.gov.eg', 'ppo.gov.eg'];
+      for (const domain of domains) {
+        const cookies = await chrome.cookies.getAll({ domain });
+        for (const cookie of cookies) {
+          const protocol = cookie.secure ? "https:" : "http:";
+          const cookieUrl = `${protocol}//${cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain}${cookie.path}`;
+          await chrome.cookies.remove({ url: cookieUrl, name: cookie.name }).catch(() => {});
+        }
+      }
+    }
+  } catch (e) {}
+
+  try {
+    if (chrome.browsingData) {
+      await chrome.browsingData.remove({
+        origins: [
+          "https://www.ppo.gov.eg",
+          "https://ppo.gov.eg"
+        ]
+      }, {
+        cache: true,
+        cookies: true,
+        localStorage: true,
+        serviceWorkers: true
+      }).catch(() => {});
+    }
+  } catch (e) {}
+}
 
 // 点击桌面通知直接打开历史记录大窗口
 chrome.notifications?.onClicked?.addListener((notifId) => {

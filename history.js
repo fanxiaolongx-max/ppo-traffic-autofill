@@ -113,6 +113,15 @@ function bindEvents() {
 
   document.getElementById('btn-clear-all')?.addEventListener('click', handleClearAll);
 
+  // 清除官网 Session 历史痕迹
+  document.getElementById('btn-clean-site-session')?.addEventListener('click', () => {
+    if (confirm('确定要清除浏览器中存储的埃及 PPO 官网所有会话 Cookie、Session 和缓存痕迹吗？\n（这有助于解决二次查询卡顿与会话保护报错）')) {
+      chrome.runtime.sendMessage({ action: 'clean_site_traces' }, () => {
+        alert('🧹 成功清除埃及官网所有历史会话痕迹！已重置为干净的新会话状态。');
+      });
+    }
+  });
+
   // 1. 全局备份/恢复下拉菜单切换
   const backupBtn = document.getElementById('btn-backup-menu');
   const backupDropdown = document.getElementById('backup-dropdown');

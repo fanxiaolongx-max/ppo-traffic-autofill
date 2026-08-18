@@ -45,7 +45,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 全面探查并清理该站点的 Cookie 和 Session 残留，并记录到诊断日志
+// 全面探查并清理该站点的 APEX 业务会话残留，同时保留 WAF 硬件防火墙通行证
 async function inspectAndPurgeResidualSessions(addLog) {
   let cleanedCount = 0;
   const foundNames = [];
@@ -56,6 +56,10 @@ async function inspectAndPurgeResidualSessions(addLog) {
       for (const domain of domains) {
         const cookies = await chrome.cookies.getAll({ domain });
         for (const cookie of cookies) {
+          // 仅清理 APEX 业务会话 Cookie，严密保留 F5 WAF 信任凭证 (TS01..., BIGipServer...) 防止防火墙误伤阻断
+          const isWafCookie = cookie.name.startsWith('TS') || cookie.name.startsWith('BIGipServer');
+          if (isWafCookie) continue;
+
           if (!foundNames.includes(cookie.name)) {
             foundNames.push(cookie.name);
           }
@@ -70,11 +74,11 @@ async function inspectAndPurgeResidualSessions(addLog) {
 
   if (foundNames.length > 0) {
     if (addLog) {
-      addLog('🔍 探查残留会话', `检测到 ${foundNames.length} 种历史残留 Cookie [${foundNames.join(', ')}]，已全部深度清理`);
+      addLog('🔍 探查残留会话', `检测到 ${foundNames.length} 个 APEX 会话 Cookie [${foundNames.join(', ')}]，已净化重置 (已保留 WAF 防火墙通行令牌)`);
     }
   } else {
     if (addLog) {
-      addLog('🔍 探查残留会话', '未检测到任何历史 Cookie 残留，会话环境处于纯净初始态');
+      addLog('🔍 探查残留会话', '未检测到任何冲突会话残留，会话环境处于纯净初始态');
     }
   }
 

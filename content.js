@@ -801,26 +801,11 @@
     doFillOperations(data, autoSubmit);
   }
 
-  // 清理当前页面内的所有 Session/LocalStorage/Cookie 访问痕迹
+  // 清理当前页面内的 Session 访问痕迹 (保留 WAF 安全信任 Cookie)
   function purgeSiteSessionAndTraces() {
     try {
       sessionStorage.clear();
       localStorage.clear();
-      const cookies = document.cookie.split(";");
-      cookies.forEach(c => {
-        const eqPos = c.indexOf("=");
-        const name = eqPos > -1 ? c.substr(0, eqPos).trim() : c.trim();
-        if (name) {
-          document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.ppo.gov.eg";
-          document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
-        }
-      });
-    } catch (e) {}
-
-    try {
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ action: 'clean_site_traces' });
-      }
     } catch (e) {}
   }
 
@@ -1812,26 +1797,9 @@
     });
   }
 
-  function initPageLoadUnfreezer() {
-    // 页面加载初期 1.2s, 3s, 6s 自动穿透死锁遮罩，防止埃及官网慢速资产阻塞页面交互
-    setTimeout(() => {
-      removeBlockingOverlays(false);
-    }, 1200);
-
-    setTimeout(() => {
-      removeBlockingOverlays(true);
-      ensureFormFieldsInteractable();
-    }, 3000);
-
-    setTimeout(() => {
-      removeBlockingOverlays(true);
-      ensureFormFieldsInteractable();
-    }, 6000);
-  }
-
   function initApp() {
     createFloatingUI();
-    initPageLoadUnfreezer();
+    // 保持静默零干扰：不主动打断官方 APEX 的正常异步组件初始化
   }
 
   if (document.readyState === 'loading') {

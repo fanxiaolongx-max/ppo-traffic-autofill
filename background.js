@@ -45,40 +45,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 全面清理该站点的 Cookie、Session 和本地缓存痕迹 (清除 APEX 历史会话死锁)
-async function cleanAllSiteTracesAndCookies() {
+// 全面探查并清理该站点的 Cookie 和 Session 残留，并记录到诊断日志
+async function inspectAndPurgeResidualSessions(addLog) {
+  let cleanedCount = 0;
+  const foundNames = [];
+
   try {
     if (chrome.cookies) {
       const domains = ['.ppo.gov.eg', 'www.ppo.gov.eg', 'ppo.gov.eg'];
       for (const domain of domains) {
         const cookies = await chrome.cookies.getAll({ domain });
         for (const cookie of cookies) {
+          if (!foundNames.includes(cookie.name)) {
+            foundNames.push(cookie.name);
+          }
           const protocol = cookie.secure ? "https:" : "http:";
           const cookieUrl = `${protocol}//${cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain}${cookie.path}`;
           await chrome.cookies.remove({ url: cookieUrl, name: cookie.name }).catch(() => {});
+          cleanedCount++;
         }
       }
     }
   } catch (e) {}
 
+  if (foundNames.length > 0) {
+    if (addLog) {
+      addLog('🔍 探查残留会话', `检测到 ${foundNames.length} 种历史残留 Cookie [${foundNames.join(', ')}]，已全部深度清理`);
+    }
+  } else {
+    if (addLog) {
+      addLog('🔍 探查残留会话', '未检测到任何历史 Cookie 残留，会话环境处于纯净初始态');
+    }
+  }
+
+  // 同时也排查并关闭任何未关闭的历史静默后台标签页
   try {
-    if (chrome.browsingData) {
-      await chrome.browsingData.remove({
-        origins: [
-          "https://www.ppo.gov.eg",
-          "https://ppo.gov.eg"
-        ]
-      }, {
-        cache: true,
-        cookies: true,
-        localStorage: true,
-        serviceWorkers: true
-      }).catch(() => {});
+    const ppoTabs = await chrome.tabs.query({ url: "*://*.ppo.gov.eg/*" });
+    const silentResidualTabs = ppoTabs.filter(t => !t.active);
+    for (const t of silentResidualTabs) {
+      await chrome.tabs.remove(t.id).catch(() => {});
+      if (addLog) {
+        addLog('🧹 清理残留标签', `已安全关闭 1 个历史未关闭的静默后台标签页 (Tab ID: ${t.id})`);
+      }
     }
   } catch (e) {}
 }
 
-// 2. 真实内核静默后台渲染与全程过程追踪引擎 (Silent Background Browser Engine)
+async function cleanAllSiteTracesAndCookies() {
+  await inspectAndPurgeResidualSessions(null);
+}
+
+// 2. 真实内核静默后台渲染与全程过程追踪引擎 (Two-Phase State Machine)
 function executeSilentTabQuery(queryData) {
   return new Promise(async (resolve, reject) => {
     const startTime = Date.now();
@@ -93,16 +110,19 @@ function executeSilentTabQuery(queryData) {
 
     addLog('🚀 启动任务', '初始化静默真实浏览器渲染引擎 (不抢焦点·完全绕过 WAF 防火墙)');
 
-    // 1. 先快速抹除旧会话 Cookie，确保拿到最新状态
-    await cleanAllSiteTracesAndCookies();
-    addLog('🧹 会话净化', '已清除本地残留 Cookie 痕迹，重置干净环境');
+    // 1. 执行前会话探查与深度净化
+    await inspectAndPurgeResidualSessions(addLog);
 
     let silentTab = null;
     let isFinished = false;
+    let formSubmitted = false;
+    let isSubmitting = false;
     let queryTimeout = null;
+    let pollInterval = null;
 
     const cleanup = () => {
       if (queryTimeout) clearTimeout(queryTimeout);
+      if (pollInterval) clearInterval(pollInterval);
       if (silentTab && silentTab.id) {
         try {
           chrome.tabs.remove(silentTab.id, () => {
@@ -113,7 +133,7 @@ function executeSilentTabQuery(queryData) {
       }
     };
 
-    // 设置 25 秒总超时熔断保护
+    // 25 秒总超时熔断保护
     queryTimeout = setTimeout(() => {
       if (!isFinished) {
         isFinished = true;
@@ -126,7 +146,7 @@ function executeSilentTabQuery(queryData) {
     try {
       // 2. 创建静默后台标签页 (active: false，用户完全无感)
       silentTab = await chrome.tabs.create({
-        url: `${TARGET_PPO_URL}?clear=201,14,RP`,
+        url: TARGET_PPO_URL,
         active: false
       });
       addLog('🌐 创建静默标签页', `Tab ID: ${silentTab.id} (active: false, 处于后台真实渲染)`);
@@ -137,164 +157,246 @@ function executeSilentTabQuery(queryData) {
       const fullPlate = `${letters} ${rawNum}`.trim() || '埃及车辆';
       const isPassport = queryData.ownerType !== 'national_id';
 
-      // 3. 监听标签页更新与结果抓取
-      const onTabUpdatedListener = (tabId, changeInfo, tab) => {
-        if (tabId !== silentTab.id) return;
-
-        if (changeInfo.status === 'complete') {
-          const currentUrl = tab.url || '';
-          addLog('📄 页面加载完成', `当前 URL: ${currentUrl}`);
-
-          // 如果在结果页
-          if (currentUrl.includes('traffic-fines-summary') || currentUrl.includes('traffic?clear=201')) {
-            addLog('🎯 进入结果页', '官方 WAF 放行并成功返回结果页，正在提取罚款数据...');
-            
-            setTimeout(() => {
-              chrome.scripting.executeScript({
-                target: { tabId: silentTab.id },
-                func: () => {
-                  const pageText = document.body ? document.body.innerText || '' : '';
-                  let totalFine = '';
-                  let violationCount = '';
-                  let reconcileFine = '';
-
-                  const allDivs = Array.from(document.querySelectorAll('div, span, td'));
-                  allDivs.forEach(el => {
-                    const text = el.innerText?.trim() || '';
-                    if (text === 'اجمالي الغرامات الشاملة') {
-                      const parent = el.closest('.t-Region, div') || el.parentElement;
-                      if (parent) {
-                        const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
-                        if (matches) totalFine = matches[0].trim();
-                      }
-                    } else if (text === 'عدد المخالفات') {
-                      const parent = el.closest('.t-Region, div') || el.parentElement;
-                      if (parent) {
-                        const matches = parent.innerText.match(/[\d\u0660-\u0669]+/);
-                        if (matches) violationCount = matches[0].trim();
-                      }
-                    } else if (text === 'إجمالى غرامات التصالح' || text === 'اجمالي غرامات التصالح') {
-                      const parent = el.closest('.t-Region, div') || el.parentElement;
-                      if (parent) {
-                        const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
-                        if (matches) reconcileFine = matches[0].trim();
-                      }
-                    }
-                  });
-
-                  if (!totalFine) {
-                    const m = pageText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
-                    if (m) totalFine = m[1].replace(/\n/g, ' ').trim();
-                  }
-                  if (!violationCount) {
-                    const m = pageText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/);
-                    if (m) violationCount = m[1].trim();
-                  }
-                  if (!reconcileFine) {
-                    const m = pageText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
-                    if (m) reconcileFine = m[1].replace(/\n/g, ' ').trim();
-                  }
-
-                  return {
-                    totalFine: totalFine || '0 جنيه',
-                    violationCount: violationCount || '0',
-                    reconcileFine: reconcileFine || '0 جنيه',
-                    rawSnapshot: pageText.slice(0, 2000)
-                  };
+      // 阶段一：等待表单加载就绪并执行 DOM 填入与提交
+      const tryFillAndSubmitForm = async () => {
+        if (formSubmitted || isSubmitting || isFinished) return;
+        isSubmitting = true;
+        
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: silentTab.id },
+            args: [{
+              letter1: queryData.letter1 || '',
+              letter2: queryData.letter2 || '',
+              letter3: queryData.letter3 || '',
+              platenum: rawNum,
+              ownerType: queryData.ownerType || 'passport',
+              country: queryData.country || '10206',
+              passportNo: rawPassport,
+              nationalId: String(queryData.nationalId || '')
+            }],
+            func: (data) => {
+              const letterInput = document.getElementById('P14_LETER_1');
+              if (!letterInput) {
+                // 尝试切换到车辆违章选项卡
+                const vehicleTab = Array.from(document.querySelectorAll('a, button, li')).find(el => 
+                  el.innerText && el.innerText.includes('مخالفات رخص المركبات')
+                );
+                if (vehicleTab) {
+                  try { vehicleTab.click(); } catch(e){}
                 }
-              }).then((results) => {
-                if (isFinished) return;
-                isFinished = true;
-                chrome.tabs.onUpdated.removeListener(onTabUpdatedListener);
+                return { ready: false };
+              }
 
-                const scraped = (results && results[0] && results[0].result) || {
-                  totalFine: '0 جنيه',
-                  violationCount: '0',
-                  reconcileFine: '0 جنيه',
-                  rawSnapshot: ''
-                };
-
-                const durationMs = Date.now() - startTime;
-                addLog('🎉 抓取成功', `总罚款: ${scraped.totalFine} | 违章笔数: ${scraped.violationCount} 笔 | 和解金额: ${scraped.reconcileFine}`);
-                addLog('⏱️ 总耗时', `${durationMs} ms`);
-
-                const formattedLog = [
-                  `=======================================================`,
-                  `📡 [真实浏览器静默后台渲染与全程过程追踪报告]`,
-                  `=======================================================`,
-                  `1. 查询车辆: ${fullPlate}`,
-                  `2. 证件信息: ${isPassport ? '护照' : '身份证'} - ${rawPassport || queryData.nationalId}`,
-                  `3. 最终抓取结果:`,
-                  `   • 总罚款: ${scraped.totalFine}`,
-                  `   • 违章笔数: ${scraped.violationCount} 笔`,
-                  `   • 和解金额: ${scraped.reconcileFine}`,
-                  `   • 总耗时: ${durationMs} ms`,
-                  `-------------------------------------------------------`,
-                  `4. ⚡ 毫秒级全程执行轨迹 (Trace Logs):`,
-                  `-------------------------------------------------------`,
-                  ...traceLogs,
-                  `-------------------------------------------------------`,
-                  `5. 📄 官方页面原始抓取快照:`,
-                  `-------------------------------------------------------`,
-                  scraped.rawSnapshot || '(无文本快照)'
-                ].join('\n');
-
-                const finalResult = {
-                  totalFine: scraped.totalFine,
-                  violationCount: scraped.violationCount,
-                  reconcileFine: scraped.reconcileFine,
-                  time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-                  latencyMs: durationMs,
-                  isDirectApi: false,
-                  isSilentRender: true,
-                  rawDiagnosticLog: formattedLog
-                };
-
-                saveQueryToHistory(queryData, finalResult, fullPlate);
-                handleShowResultNotification(finalResult, fullPlate);
-                cleanup();
-                resolve(finalResult);
-              }).catch((e) => {
-                if (!isFinished) {
-                  isFinished = true;
-                  chrome.tabs.onUpdated.removeListener(onTabUpdatedListener);
-                  cleanup();
-                  reject(e);
+              // 选中字母+数字单选
+              const radios = document.querySelectorAll('input[name="P14_CHOSE_OPTION"]');
+              radios.forEach(r => {
+                if (r.value === '1') {
+                  r.checked = true;
+                  r.dispatchEvent(new Event('click', { bubbles: true }));
+                  r.dispatchEvent(new Event('change', { bubbles: true }));
                 }
               });
-            }, 600);
-          } else if (currentUrl.includes('/traffic')) {
-            // 表单页面加载完成，派发自动填表
-            addLog('📝 表单页面就绪', '正在向静默标签页发送自动填表与提交指令...');
-            setTimeout(() => {
-              chrome.tabs.sendMessage(silentTab.id, {
-                action: 'direct_fill',
-                data: {
-                  letter1: queryData.letter1 || '',
-                  letter2: queryData.letter2 || '',
-                  letter3: queryData.letter3 || '',
-                  platenum: rawNum,
-                  numeralMode: queryData.numeralMode || 'latin',
-                  ownerType: queryData.ownerType || 'passport',
-                  foreignType: queryData.foreignType || 'foreign',
-                  country: queryData.country || '10206',
-                  passportNo: rawPassport,
-                  nationalId: String(queryData.nationalId || '')
-                },
-                autoSubmit: true
-              }, (resp) => {
-                if (chrome.runtime.lastError) {
-                  addLog('⚠️ 填表握手', '等待 Content Script 自动巡检执行');
-                } else {
-                  addLog('✅ 表单填入提交', '已成功在静默标签页完成 DOM 填入并触发官方查询');
+
+              // 填入字母与数字
+              const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) {
+                  if (window.apex && window.apex.item && window.apex.item(id)) {
+                    try { window.apex.item(id).setValue(val); } catch(e){}
+                  }
+                  el.value = val;
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  el.dispatchEvent(new Event('blur', { bubbles: true }));
+                }
+              };
+
+              setVal('P14_LETER_1', data.letter1);
+              setVal('P14_LETER_2', data.letter2);
+              setVal('P14_LETER_3', data.letter3);
+              setVal('P14_NUMBER_WITH_LETTER', data.platenum);
+
+              // 证件类型
+              const isPass = data.ownerType !== 'national_id';
+              const idRadios = document.querySelectorAll('input[name="P14_ID_TYPE_NUMS_LETTERS"]');
+              idRadios.forEach(r => {
+                if (r.value === (isPass ? '1429' : '2153')) {
+                  r.checked = true;
+                  r.dispatchEvent(new Event('click', { bubbles: true }));
+                  r.dispatchEvent(new Event('change', { bubbles: true }));
                 }
               });
-            }, 800);
+
+              if (isPass) {
+                // 外籍
+                const forRadios = document.querySelectorAll('input[name="P14_ISFOREIGN__NUMS_LETTERS"]');
+                forRadios.forEach(r => {
+                  if (r.value === '1') {
+                    r.checked = true;
+                    r.dispatchEvent(new Event('click', { bubbles: true }));
+                    r.dispatchEvent(new Event('change', { bubbles: true }));
+                  }
+                });
+
+                // 国籍
+                const countrySelect = document.getElementById('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS');
+                if (countrySelect) {
+                  countrySelect.value = data.country || '10206';
+                  countrySelect.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                // 纯数字护照
+                setVal('P14_PASSPORT_NUM_NUMS_LETTERS', data.passportNo);
+              } else {
+                setVal('P14_NATIONAL_ID_NUMS_LETTERS', data.nationalId);
+              }
+
+              // 点击查询按钮
+              const submitBtn = document.getElementById('GET_FIN_LETTER_NUMBERS_BTN') || document.querySelector("button[id*='GET_FIN']");
+              if (submitBtn) {
+                submitBtn.click();
+                return { ready: true, submitted: true };
+              }
+
+              return { ready: true, submitted: false };
+            }
+          });
+
+          if (results && results[0] && results[0].result && results[0].result.submitted) {
+            formSubmitted = true;
+            addLog('✅ 表单填入提交', `已成功在静默标签页填入 [${fullPlate}] 并点击查询按钮`);
+            addLog('⏳ 等待官方响应', '正在等待官方 APEX 数据库计算并渲染结果页...');
+          } else {
+            isSubmitting = false;
           }
+        } catch (err) {
+          isSubmitting = false;
         }
       };
 
-      chrome.tabs.onUpdated.addListener(onTabUpdatedListener);
+      // 阶段二：轮询检查结果页渲染
+      const checkAndScrapeResults = async () => {
+        if (!formSubmitted || isFinished) return;
+
+        try {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: silentTab.id },
+            func: () => {
+              const pageText = document.body ? document.body.innerText || '' : '';
+              let totalFine = '';
+              let violationCount = '';
+              let reconcileFine = '';
+
+              const allDivs = Array.from(document.querySelectorAll('div, span, td'));
+              allDivs.forEach(el => {
+                const text = el.innerText?.trim() || '';
+                if (text === 'اجمالي الغرامات الشاملة') {
+                  const parent = el.closest('.t-Region, div') || el.parentElement;
+                  if (parent) {
+                    const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
+                    if (matches) totalFine = matches[0].trim();
+                  }
+                } else if (text === 'عدد المخالفات') {
+                  const parent = el.closest('.t-Region, div') || el.parentElement;
+                  if (parent) {
+                    const matches = parent.innerText.match(/[\d\u0660-\u0669]+/);
+                    if (matches) violationCount = matches[0].trim();
+                  }
+                } else if (text === 'إجمالى غرامات التصالح' || text === 'اجمالي غرامات التصالح') {
+                  const parent = el.closest('.t-Region, div') || el.parentElement;
+                  if (parent) {
+                    const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
+                    if (matches) reconcileFine = matches[0].trim();
+                  }
+                }
+              });
+
+              if (!totalFine) {
+                const m = pageText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
+                if (m) totalFine = m[1].replace(/\n/g, ' ').trim();
+              }
+              if (!violationCount) {
+                const m = pageText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/);
+                if (m) violationCount = m[1].trim();
+              }
+              if (!reconcileFine) {
+                const m = pageText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
+                if (m) reconcileFine = m[1].replace(/\n/g, ' ').trim();
+              }
+
+              const hasSummaryHeader = pageText.includes('بيانات المخالفات') || pageText.includes('بيانات التراخيص والمخالفات');
+              const isExplicitClean = pageText.includes('لا توجد مخالفات') || pageText.includes('لا توجد بيانات');
+
+              if (totalFine || violationCount || (hasSummaryHeader && isExplicitClean)) {
+                return {
+                  ready: true,
+                  totalFine: totalFine || '0 جنيه',
+                  violationCount: violationCount || '0',
+                  reconcileFine: reconcileFine || '0 جنيه',
+                  rawSnapshot: pageText.slice(0, 2000)
+                };
+              }
+              return { ready: false, rawSnapshot: pageText.slice(0, 500) };
+            }
+          });
+
+          if (results && results[0] && results[0].result && results[0].result.ready) {
+            isFinished = true;
+            const scraped = results[0].result;
+            const durationMs = Date.now() - startTime;
+
+            addLog('🎉 抓取成功', `总罚款: ${scraped.totalFine} | 违章笔数: ${scraped.violationCount} 笔 | 和解金额: ${scraped.reconcileFine}`);
+            addLog('⏱️ 总耗时', `${durationMs} ms`);
+
+            const formattedLog = [
+              `=======================================================`,
+              `📡 [真实浏览器静默后台渲染与全程过程追踪报告]`,
+              `=======================================================`,
+              `1. 查询车辆: ${fullPlate}`,
+              `2. 证件信息: ${isPassport ? '护照' : '身份证'} - ${rawPassport || queryData.nationalId}`,
+              `3. 最终抓取结果:`,
+              `   • 总罚款: ${scraped.totalFine}`,
+              `   • 违章笔数: ${scraped.violationCount} 笔`,
+              `   • 和解金额: ${scraped.reconcileFine}`,
+              `   • 总耗时: ${durationMs} ms`,
+              `-------------------------------------------------------`,
+              `4. ⚡ 毫秒级全程执行轨迹 (Trace Logs):`,
+              `-------------------------------------------------------`,
+              ...traceLogs,
+              `-------------------------------------------------------`,
+              `5. 📄 官方页面原始抓取快照:`,
+              `-------------------------------------------------------`,
+              scraped.rawSnapshot || '(无文本快照)'
+            ].join('\n');
+
+            const finalResult = {
+              totalFine: scraped.totalFine,
+              violationCount: scraped.violationCount,
+              reconcileFine: scraped.reconcileFine,
+              time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+              latencyMs: durationMs,
+              isDirectApi: false,
+              isSilentRender: true,
+              rawDiagnosticLog: formattedLog
+            };
+
+            saveQueryToHistory(queryData, finalResult, fullPlate);
+            handleShowResultNotification(finalResult, fullPlate);
+            cleanup();
+            resolve(finalResult);
+          }
+        } catch (err) {}
+      };
+
+      // 启动智能自适应轮询
+      pollInterval = setInterval(() => {
+        if (!formSubmitted) {
+          tryFillAndSubmitForm();
+        } else {
+          checkAndScrapeResults();
+        }
+      }, 500);
 
     } catch (err) {
       cleanup();

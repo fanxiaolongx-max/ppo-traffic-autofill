@@ -814,7 +814,7 @@
     showToast('🔄 检测到当前在结果页，正在清除旧会话并开启全新查询...', false);
     purgeSiteSessionAndTraces();
 
-    const cleanUrl = TARGET_PPO_URL + '?clear=201,14,RP';
+    const cleanUrl = TARGET_PPO_URL;
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({

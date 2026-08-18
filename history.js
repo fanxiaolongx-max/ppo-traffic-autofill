@@ -697,31 +697,10 @@ function refillAndQueryRecord(rec) {
 }
 
 function dispatchQueryTaskToTab(data) {
-  const taskPayload = {
+  chrome.runtime.sendMessage({
+    action: 'open_and_fill',
     data: data,
-    autoSubmit: true,
-    timestamp: Date.now()
-  };
-
-  chrome.storage.local.set({ pendingPpoTask: taskPayload }, () => {
-    chrome.tabs.query({}, (tabs) => {
-      const ppoTab = tabs.find(t => t.url && (t.url.includes('ppo.gov.eg/ppo/') || t.url.includes('ppo.gov.eg')));
-      if (ppoTab) {
-        chrome.tabs.update(ppoTab.id, { active: true }, () => {
-          chrome.tabs.sendMessage(ppoTab.id, {
-            action: 'direct_fill',
-            data: taskPayload.data,
-            autoSubmit: true
-          }, () => {
-            if (chrome.runtime.lastError && ppoTab.url && !ppoTab.url.includes('/traffic')) {
-              chrome.tabs.update(ppoTab.id, { url: TARGET_PPO_URL });
-            }
-          });
-        });
-      } else {
-        chrome.tabs.create({ url: TARGET_PPO_URL, active: true });
-      }
-    });
+    autoSubmit: true
   });
 }
 

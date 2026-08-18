@@ -656,17 +656,22 @@ function dispatchQueryTask(queryData) {
       const ppoTab = tabs.find(t => t.url && (t.url.includes('ppo.gov.eg/ppo/') || t.url.includes('ppo.gov.eg')));
 
       if (ppoTab) {
-        chrome.tabs.update(ppoTab.id, { active: true }, () => {
-          chrome.tabs.sendMessage(ppoTab.id, {
-            action: 'direct_fill',
-            data: taskPayload.data,
-            autoSubmit: true
-          }, () => {
-            if (chrome.runtime.lastError && ppoTab.url && !ppoTab.url.includes('/traffic')) {
-              chrome.tabs.update(ppoTab.id, { url: TARGET_PPO_URL });
-            }
+        if (ppoTab.url && ppoTab.url.includes('traffic-fines-summary')) {
+          // 如果标签页停留在上一次的结果摘要页，直接跳转重置为纯净表单页
+          chrome.tabs.update(ppoTab.id, { active: true, url: TARGET_PPO_URL });
+        } else {
+          chrome.tabs.update(ppoTab.id, { active: true }, () => {
+            chrome.tabs.sendMessage(ppoTab.id, {
+              action: 'direct_fill',
+              data: taskPayload.data,
+              autoSubmit: true
+            }, () => {
+              if (chrome.runtime.lastError) {
+                chrome.tabs.update(ppoTab.id, { url: TARGET_PPO_URL });
+              }
+            });
           });
-        });
+        }
       } else {
         chrome.tabs.create({ url: TARGET_PPO_URL, active: true });
       }

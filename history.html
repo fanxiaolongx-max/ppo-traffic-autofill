@@ -24,6 +24,14 @@
         <button type="button" class="btn btn-outline" id="btn-open-profiles-mgr" title="管理所有已保存的常用车辆与人员配置">
           <span>👤 常用配置管理</span>
         </button>
+        <!-- 核心查询模式切换 -->
+        <div style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.35); padding: 3px 8px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+          <span style="font-size: 11px; color: var(--text-muted);">模式:</span>
+          <div id="history-query-mode-switch" style="display: flex; gap: 3px;">
+            <button type="button" class="btn-mode-pill active" data-mode="direct" title="推荐：后台直接发送 APEX 数据包，秒级出结果，不打开任何网页" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: none; cursor: pointer; background: var(--primary-gold); color: #000; font-weight: 700;">🚀 极速直连</button>
+            <button type="button" class="btn-mode-pill" data-mode="tab_ui" title="备用：打开官方网站并在网页中模拟填表" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: none; cursor: pointer; background: transparent; color: var(--text-muted);">🌐 网页模拟</button>
+          </div>
+        </div>
         <!-- 全局数据备份与恢复中心 -->
         <div class="export-dropdown-wrapper" id="backup-dropdown-wrapper">
           <button type="button" class="btn btn-outline" id="btn-backup-menu" title="备份与恢复插件所有数据（含车辆人员配置、历史记录、服务监控）">

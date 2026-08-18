@@ -650,24 +650,55 @@ function openDetailModal(rec) {
   modal.classList.add('show');
 }
 
-// 一键再次填表
+// 一键再次填表/查询 (支持极速直连与网页模式)
 function refillAndQueryRecord(rec) {
   const req = rec.request;
   if (!req) return;
 
+  const queryPayload = {
+    letter1: req.letter1 || '',
+    letter2: req.letter2 || '',
+    letter3: req.letter3 || '',
+    platenum: req.platenum || '',
+    numeralMode: req.numeralMode || 'latin',
+    ownerType: req.ownerType || 'passport',
+    foreignType: req.foreignType || 'foreign',
+    country: req.country || '10206',
+    passportNo: req.passportNo || '',
+    nationalId: req.nationalId || '',
+    remark: req.profileName || '历史记录再次查询'
+  };
+
+  chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
+    const mode = res.ppo_traffic_query_mode || 'direct';
+
+    if (mode === 'direct') {
+      const btnRefill = document.querySelector(`.btn-refill[data-id="${rec.id}"]`);
+      if (btnRefill) btnRefill.textContent = '⏳ 查询中...';
+
+      chrome.runtime.sendMessage({
+        action: 'execute_direct_query',
+        data: queryPayload
+      }, (resp) => {
+        if (btnRefill) btnRefill.textContent = '一键填表';
+
+        if (resp && resp.success && resp.data) {
+          alert(`🎉 极速直连查询完成！\n\n• 车牌: ${req.fullPlate || '埃及车辆'}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 800}ms\n\n新查询结果已自动录入历史档案！`);
+          loadHistoryData();
+        } else {
+          alert(`⚠️ 直连遇到提示: ${resp?.error || '失败'}，将为您自动打开官方网页模式`);
+          dispatchQueryTaskToTab(queryPayload);
+        }
+      });
+    } else {
+      dispatchQueryTaskToTab(queryPayload);
+    }
+  });
+}
+
+function dispatchQueryTaskToTab(data) {
   const taskPayload = {
-    data: {
-      letter1: req.letter1 || '',
-      letter2: req.letter2 || '',
-      letter3: req.letter3 || '',
-      platenum: req.platenum || '',
-      numeralMode: req.numeralMode || 'latin',
-      ownerType: req.ownerType || 'passport',
-      foreignType: req.foreignType || 'foreign',
-      country: req.country || '10206',
-      passportNo: req.passportNo || '',
-      nationalId: req.nationalId || ''
-    },
+    data: data,
     autoSubmit: true,
     timestamp: Date.now()
   };
@@ -682,8 +713,8 @@ function refillAndQueryRecord(rec) {
             data: taskPayload.data,
             autoSubmit: true
           }, () => {
-            if (chrome.runtime.lastError) {
-              chrome.tabs.reload(ppoTab.id);
+            if (chrome.runtime.lastError && ppoTab.url && !ppoTab.url.includes('/traffic')) {
+              chrome.tabs.update(ppoTab.id, { url: TARGET_PPO_URL });
             }
           });
         });
@@ -1040,14 +1071,27 @@ function renderProfilesManagerUI(list) {
       const id = btn.dataset.id;
       const target = list.find(p => p.id === id);
       if (target) {
-        chrome.storage.local.set({
-          pendingPpoTask: {
-            data: target,
-            autoSubmit: true,
-            timestamp: Date.now()
+        chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
+          const mode = res.ppo_traffic_query_mode || 'direct';
+          if (mode === 'direct') {
+            btn.textContent = '⏳ 查询中...';
+            chrome.runtime.sendMessage({
+              action: 'execute_direct_query',
+              data: target
+            }, (resp) => {
+              btn.textContent = '🚀 填表查询';
+              if (resp && resp.success && resp.data) {
+                alert(`🎉 极速直连查询完成！\n\n• 配置: ${target.remark || ''}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 800}ms\n\n已自动保存至历史档案！`);
+                document.getElementById('profiles-modal-overlay')?.classList.remove('show');
+                loadHistoryData();
+              } else {
+                alert(`⚠️ 直连遇到提示: ${resp?.error || '失败'}，将为您自动打开官方网页模式`);
+                dispatchQueryTaskToTab(target);
+              }
+            });
+          } else {
+            dispatchQueryTaskToTab(target);
           }
-        }, () => {
-          chrome.tabs.create({ url: TARGET_PPO_URL });
         });
       }
     });
@@ -1131,11 +1175,46 @@ function handleImportProfiles(e) {
   reader.readAsText(file);
 }
 
-// 页面加载就绪后初始化配置管理器与服务器监控看板
+// 页面加载就绪后初始化配置管理器、模式切换器与服务器监控看板
 document.addEventListener('DOMContentLoaded', () => {
   initProfilesManager();
   initServerHealthMonitor();
+  initHistoryQueryModeSwitcher();
 });
+
+const QUERY_MODE_STORAGE_KEY = 'ppo_traffic_query_mode';
+
+function initHistoryQueryModeSwitcher() {
+  chrome.storage.local.get([QUERY_MODE_STORAGE_KEY], (res) => {
+    const mode = res[QUERY_MODE_STORAGE_KEY] || 'direct';
+    updateHistoryModeUI(mode);
+  });
+
+  document.querySelectorAll('#history-query-mode-switch .btn-mode-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.getAttribute('data-mode');
+      chrome.storage.local.set({ [QUERY_MODE_STORAGE_KEY]: mode }, () => {
+        updateHistoryModeUI(mode);
+      });
+    });
+  });
+}
+
+function updateHistoryModeUI(mode) {
+  document.querySelectorAll('#history-query-mode-switch .btn-mode-pill').forEach(btn => {
+    const isAct = btn.getAttribute('data-mode') === mode;
+    btn.classList.toggle('active', isAct);
+    if (isAct) {
+      btn.style.background = 'var(--primary-gold)';
+      btn.style.color = '#000';
+      btn.style.fontWeight = '700';
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = 'var(--text-muted)';
+      btn.style.fontWeight = 'normal';
+    }
+  });
+}
 
 // 官方服务器健康状态与 GitHub 风格 Uptime 状态条监控
 const SERVER_PROBES_STORAGE_KEY = 'ppo_traffic_server_probes_v1';

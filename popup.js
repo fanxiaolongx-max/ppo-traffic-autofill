@@ -42,16 +42,61 @@ const COMMON_LETTERS = [
 let activeLetterTarget = 'letter1';
 let numeralMode = 'latin';
 let currentProfileId = null;
+let currentQueryMode = 'direct'; // 默认新逻辑：极速直连
 
 const STORAGE_KEY = 'ppo_traffic_profiles_v2';
 const LAST_ACTIVE_KEY = 'ppo_traffic_last_active_id';
+const QUERY_MODE_KEY = 'ppo_traffic_query_mode';
 
 document.addEventListener('DOMContentLoaded', () => {
   initDOM();
+  initQueryModeSwitcher();
   bindEvents();
   loadProfilesFromStorage();
   initPopupServerHealth();
 });
+
+function initQueryModeSwitcher() {
+  chrome.storage.local.get([QUERY_MODE_KEY], (res) => {
+    currentQueryMode = res[QUERY_MODE_KEY] || 'direct';
+    updateQueryModeUI(currentQueryMode);
+  });
+
+  document.querySelectorAll('#ppo-query-mode-switch .ppo-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.getAttribute('data-mode');
+      currentQueryMode = mode;
+      chrome.storage.local.set({ [QUERY_MODE_KEY]: mode });
+      updateQueryModeUI(mode);
+      showToast(mode === 'direct' ? '🚀 已切换至「极速协议直连模式」' : '🌐 已切换至「传统网页模式」');
+    });
+  });
+}
+
+function updateQueryModeUI(mode) {
+  document.querySelectorAll('#ppo-query-mode-switch .ppo-mode-btn').forEach(btn => {
+    const isAct = btn.getAttribute('data-mode') === mode;
+    btn.classList.toggle('active', isAct);
+    if (isAct) {
+      btn.style.background = 'var(--ppo-gold)';
+      btn.style.color = '#000';
+      btn.style.fontWeight = '700';
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = 'var(--ppo-text-muted)';
+      btn.style.fontWeight = 'normal';
+    }
+  });
+
+  const submitBtn = document.getElementById('ppo-btn-fill-submit');
+  if (submitBtn) {
+    if (mode === 'direct') {
+      submitBtn.innerHTML = '<span>🚀 极速直连查询 (秒级出结果·不跳页)</span>';
+    } else {
+      submitBtn.innerHTML = '<span>🔍 打开网页查询 (填入并自动查询)</span>';
+    }
+  }
+}
 
 function initDOM() {
   // 初始化国籍下拉菜单 (中国 10206 默认高亮置顶)
@@ -382,6 +427,50 @@ function handleTriggerAction(autoSubmit) {
   }
 
   const data = getFormData();
+
+  // 如果启用了「🚀 极速协议直连模式」且需要自动查询
+  if (autoSubmit && currentQueryMode === 'direct') {
+    const submitBtn = document.getElementById('ppo-btn-fill-submit');
+    const origHtml = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+      submitBtn.innerHTML = '<span>⏳ 正在极速直连官方数据库 (~0.8s)...</span>';
+      submitBtn.disabled = true;
+    }
+    showToast('🚀 正在通过 APEX 协议极速直连官方数据库...');
+
+    chrome.runtime.sendMessage({
+      action: 'execute_direct_query',
+      data: data
+    }, (resp) => {
+      if (submitBtn) {
+        submitBtn.innerHTML = origHtml;
+        submitBtn.disabled = false;
+      }
+
+      if (resp && resp.success && resp.data) {
+        const result = resp.data;
+        // 立即在当前 Popup 弹窗横幅中渲染最新结果
+        const banner = document.getElementById('ppo-result-banner');
+        if (banner) banner.style.display = 'block';
+        const totalEl = document.getElementById('ppo-res-total');
+        if (totalEl) totalEl.textContent = result.totalFine || '0 جنيه';
+        const countEl = document.getElementById('ppo-res-count');
+        if (countEl) countEl.textContent = result.violationCount || '0';
+        const reconcileEl = document.getElementById('ppo-res-reconcile');
+        if (reconcileEl) reconcileEl.textContent = result.reconcileFine || '0 جنيه';
+        const timeEl = document.getElementById('ppo-result-time');
+        if (timeEl) timeEl.textContent = `极速直连 (${result.latencyMs || 800}ms)`;
+
+        showToast(`🎉 查获结果：${result.totalFine} (${result.violationCount} 笔违章)`);
+      } else {
+        const errMsg = resp?.error || '网络握手异常';
+        showToast(`⚠️ 直连未成功: ${errMsg}，正在自动为您打开网页模式...`, true);
+        dispatchViaBackground(data, true);
+      }
+    });
+    return;
+  }
+
   showToast('🚀 正在处理中...');
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -389,14 +478,12 @@ function handleTriggerAction(autoSubmit) {
     const isPpoPage = currentTab && currentTab.url && /ppo\.gov\.eg\/ppo\//i.test(currentTab.url);
 
     if (isPpoPage) {
-      // 当前就是查询页面，直接发送消息给 content script
       chrome.tabs.sendMessage(currentTab.id, {
         action: 'direct_fill',
         data: data,
         autoSubmit: autoSubmit
       }, (response) => {
         if (chrome.runtime.lastError || !response?.success) {
-          // 如果 content script 未响应，通过 background 调度
           dispatchViaBackground(data, autoSubmit);
         } else {
           showToast(autoSubmit ? '✅ 已填入并提交查询！' : '✅ 已填入表单！');
@@ -404,7 +491,6 @@ function handleTriggerAction(autoSubmit) {
         }
       });
     } else {
-      // 当前不是查询页面，派发给 background 自动打开并填入
       dispatchViaBackground(data, autoSubmit);
     }
   });

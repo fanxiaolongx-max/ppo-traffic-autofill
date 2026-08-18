@@ -36,6 +36,19 @@
       </button>
     </div>
 
+    <!-- 查询模式切换分段开关 (极速直连 vs 网页模拟) -->
+    <div class="ppo-mode-switcher-bar" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; background: rgba(212,175,55,0.06); border-bottom: 1px solid rgba(212,175,55,0.18); font-size: 11px;">
+      <span style="color: var(--ppo-text-muted); font-weight: 500;">⚡ 查询执行模式:</span>
+      <div class="ppo-segment-group" id="ppo-query-mode-switch" style="display: flex; gap: 4px; background: rgba(0,0,0,0.4); padding: 2px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+        <button type="button" class="ppo-mode-btn active" data-mode="direct" title="推荐：后台直接模拟 APEX 协议，约 0.8 秒秒级出结果，不打开任何网页" style="padding: 3px 8px; font-size: 10.5px; border-radius: 4px; border: none; cursor: pointer; background: var(--ppo-gold); color: #000; font-weight: 700;">
+          🚀 极速直连 (新逻辑)
+        </button>
+        <button type="button" class="ppo-mode-btn" data-mode="tab_ui" title="备用：打开官方网站并在网页中模拟点击填表" style="padding: 3px 8px; font-size: 10.5px; border-radius: 4px; border: none; cursor: pointer; background: transparent; color: var(--ppo-text-muted); font-weight: normal;">
+          🌐 传统网页 (旧逻辑)
+        </button>
+      </div>
+    </div>
+
     <!-- 违章罚款结果捕捉展示横幅 -->
     <div class="ppo-result-banner" id="ppo-result-banner">
       <div class="ppo-result-header">

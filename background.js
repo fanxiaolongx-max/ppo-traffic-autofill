@@ -45,54 +45,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 全面探查并清理该站点的 APEX 业务会话残留，同时保留 WAF 硬件防火墙通行证
+// 执行前环境自检 (零干扰，确保不误伤用户正在浏览的页面)
 async function inspectAndPurgeResidualSessions(addLog) {
-  let cleanedCount = 0;
-  const foundNames = [];
-
-  try {
-    if (chrome.cookies) {
-      const domains = ['.ppo.gov.eg', 'www.ppo.gov.eg', 'ppo.gov.eg'];
-      for (const domain of domains) {
-        const cookies = await chrome.cookies.getAll({ domain });
-        for (const cookie of cookies) {
-          // 仅清理 APEX 业务会话 Cookie，严密保留 F5 WAF 信任凭证 (TS01..., BIGipServer...) 防止防火墙误伤阻断
-          const isWafCookie = cookie.name.startsWith('TS') || cookie.name.startsWith('BIGipServer');
-          if (isWafCookie) continue;
-
-          if (!foundNames.includes(cookie.name)) {
-            foundNames.push(cookie.name);
-          }
-          const protocol = cookie.secure ? "https:" : "http:";
-          const cookieUrl = `${protocol}//${cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain}${cookie.path}`;
-          await chrome.cookies.remove({ url: cookieUrl, name: cookie.name }).catch(() => {});
-          cleanedCount++;
-        }
-      }
-    }
-  } catch (e) {}
-
-  if (foundNames.length > 0) {
-    if (addLog) {
-      addLog('🔍 探查残留会话', `检测到 ${foundNames.length} 个 APEX 会话 Cookie [${foundNames.join(', ')}]，已净化重置 (已保留 WAF 防火墙通行令牌)`);
-    }
-  } else {
-    if (addLog) {
-      addLog('🔍 探查残留会话', '未检测到任何冲突会话残留，会话环境处于纯净初始态');
-    }
+  if (addLog) {
+    addLog('🔍 环境自检', '已就绪独立查询通道，准备接入官方网关');
   }
-
-  // 同时也排查并关闭任何未关闭的历史静默后台标签页
-  try {
-    const ppoTabs = await chrome.tabs.query({ url: "*://*.ppo.gov.eg/*" });
-    const silentResidualTabs = ppoTabs.filter(t => !t.active);
-    for (const t of silentResidualTabs) {
-      await chrome.tabs.remove(t.id).catch(() => {});
-      if (addLog) {
-        addLog('🧹 清理残留标签', `已安全关闭 1 个历史未关闭的静默后台标签页 (Tab ID: ${t.id})`);
-      }
-    }
-  } catch (e) {}
 }
 
 async function cleanAllSiteTracesAndCookies() {

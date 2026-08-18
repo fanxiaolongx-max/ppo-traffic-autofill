@@ -1113,11 +1113,15 @@
     }
   }
 
+  let scrapeDebounceTimer = null;
+
   function startResultObserver() {
-    // 监听 DOM 动态变化（Oracle APEX 局部刷新、SPA 切换与弹窗）
+    // 监听 DOM 动态变化（带防抖优化，绝不阻塞主线程）
     const observer = new MutationObserver(() => {
-      ensureFloatingUIExists();
-      checkAndScrapeResults();
+      if (scrapeDebounceTimer) clearTimeout(scrapeDebounceTimer);
+      scrapeDebounceTimer = setTimeout(() => {
+        checkAndScrapeResults();
+      }, 500);
     });
 
     if (document.body) {
@@ -1126,27 +1130,24 @@
         subtree: true
       });
     }
-
-    // 轮询辅助检测 (防漏检与保活)
-    setInterval(() => {
-      ensureFloatingUIExists();
-      checkAndScrapeResults();
-    }, 600);
   }
 
   let lastCapturedSign = '';
 
   function checkAndScrapeResults() {
     const isSummaryPage = window.location.href.includes('traffic-fines-summary');
+    
+    // 性能极速放行：在普通表单页且未处于等待状态时，不执行重度 DOM 遍历与 Reflow
+    const errorDialog = document.querySelector('.ui-dialog, .t-Alert--error, div[role="dialog"]');
+    if (!isSummaryPage && !errorDialog && !isAwaitingQueryResult) {
+      return;
+    }
+
     const pageText = (document.body ? document.body.innerText : '') || '';
     const hasSummaryKeywords = pageText.includes('اجمالي الغرامات الشاملة') || pageText.includes('عدد المخالفات') || pageText.includes('بيانات المخالفات');
 
-    // 确保悬浮窗在结果页也能正常渲染显示
-    ensureFloatingUIExists();
-
     // 1. 检查是否有官方错误弹窗 / 报错区域
-    const errorDialog = document.querySelector('.ui-dialog, .t-Alert--error, div[role="dialog"]');
-    const hasError = pageText.includes('حدث خطأ') || pageText.includes('خطأ') || (errorDialog && errorDialog.innerText.includes('خطأ')) || pageText.includes('الخدمة غير متاحة') || pageText.includes('انتهت الجلسة');
+    const hasError = errorDialog && (errorDialog.innerText.includes('خطأ') || errorDialog.innerText.includes('حدث خطأ') || errorDialog.innerText.includes('الخدمة غير متاحة') || errorDialog.innerText.includes('انتهت الجلسة'));
 
     if (hasError) {
       stopQueryWatchdog();

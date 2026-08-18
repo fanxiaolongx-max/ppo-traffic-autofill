@@ -23,6 +23,18 @@
       </div>
     </div>
 
+    <!-- 官网服务器健康与响应速度简易状态条 -->
+    <div class="ppo-server-health-bar" id="ppo-popup-server-health" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 14px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(212,175,55,0.15); font-size: 11px;">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 12px;">🌐</span>
+        <span style="color: var(--ppo-text-muted);">官网状态:</span>
+        <span id="popup-health-status-text" style="color: #34d399; font-weight: 600;">🟢 极速正常</span>
+      </div>
+      <button type="button" id="popup-btn-ping" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(212,175,55,0.25); border-radius: 4px; color: var(--ppo-gold); padding: 2px 6px; font-size: 10.5px; cursor: pointer;">
+        ⚡ 测速
+      </button>
+    </div>
+
     <!-- 违章罚款结果捕捉展示横幅 -->
     <div class="ppo-result-banner" id="ppo-result-banner">
       <div class="ppo-result-header">

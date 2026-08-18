@@ -16,13 +16,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sendResponse) sendResponse({ success: true });
     return true;
   }
-});
-
-// 2. 监听来自 content.js 的直接通知触发请求
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'notify_query_result') {
     handleShowResultNotification(message.data, message.plate);
     if (sendResponse) sendResponse({ success: true });
+    return true;
+  }
+  if (message.action === 'ping_server_now') {
+    probePPOServerHealth().then((result) => {
+      if (sendResponse) sendResponse({ success: true, data: result });
+    });
     return true;
   }
 });
@@ -31,6 +33,94 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.notifications?.onClicked?.addListener((notifId) => {
   chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
 });
+
+// 2. 官方服务器健康状态与响应速度探测引擎 (PPO Server Health Monitor)
+const PROBES_STORAGE_KEY = 'ppo_traffic_server_probes_v1';
+const PROBE_TARGET_URL = "https://www.ppo.gov.eg/ppo/r/ppoportal/ppoportal/traffic";
+
+async function probePPOServerHealth() {
+  const startTime = performance.now();
+  const now = Date.now();
+  const nowObj = new Date();
+  const timeStr = nowObj.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const dateStr = nowObj.toISOString().slice(0, 10);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+  try {
+    const resp = await fetch(PROBE_TARGET_URL, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-cache',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    const latency = Math.round(performance.now() - startTime);
+
+    let status = 'operational';
+    if (latency > 4000) {
+      status = 'degraded';
+    }
+
+    const point = {
+      timestamp: now,
+      timeStr: timeStr,
+      dateStr: dateStr,
+      status: status, // 'operational' (绿) | 'degraded' (黄) | 'down' (红)
+      httpStatus: resp.status || 200,
+      latencyMs: latency
+    };
+
+    saveProbePoint(point);
+    return point;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const latency = Math.round(performance.now() - startTime);
+    const isTimeout = err.name === 'AbortError' || latency >= 8500;
+
+    const point = {
+      timestamp: now,
+      timeStr: timeStr,
+      dateStr: dateStr,
+      status: 'down',
+      httpStatus: isTimeout ? 'timeout' : 'error',
+      latencyMs: latency,
+      errorMsg: isTimeout ? '连接超时 (>9s)' : (err.message || '网络连接失败')
+    };
+
+    saveProbePoint(point);
+    return point;
+  }
+}
+
+function saveProbePoint(point) {
+  chrome.storage.local.get([PROBES_STORAGE_KEY], (res) => {
+    let list = res[PROBES_STORAGE_KEY] || [];
+    list.push(point);
+    // 保留最近 90 个探测点
+    if (list.length > 90) {
+      list = list.slice(list.length - 90);
+    }
+    chrome.storage.local.set({ [PROBES_STORAGE_KEY]: list });
+  });
+}
+
+// 设置周期性后台探测 (每 3 分钟自动巡检一次)
+if (chrome.alarms) {
+  chrome.alarms.create('ppo_server_health_probe', {
+    periodInMinutes: 3
+  });
+
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'ppo_server_health_probe') {
+      probePPOServerHealth();
+    }
+  });
+}
+
+// Service Worker 启动时立即探测一次
+probePPOServerHealth();
 
 function handleShowResultNotification(scraped, fullPlate) {
   if (!scraped) return;

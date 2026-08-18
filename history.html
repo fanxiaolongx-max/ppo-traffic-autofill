@@ -42,6 +42,64 @@
       </div>
     </header>
 
+    <!-- 官方服务器状态与延迟健康看板 (GitHub / Uptime Kuma 风格) -->
+    <section class="server-monitor-card" id="ppo-server-monitor-section">
+      <div class="monitor-header">
+        <div class="monitor-title-wrap">
+          <div class="monitor-badge-icon">🌐</div>
+          <div>
+            <div class="monitor-title-text">
+              <span>埃及交通局 PPO 官网服务健康与响应速度监控</span>
+              <div class="monitor-status-pill operational" id="monitor-status-badge">
+                <span class="monitor-status-dot"></span>
+                <span id="monitor-status-text">检测中...</span>
+              </div>
+            </div>
+            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">
+              监控目标: <code style="color: var(--primary-gold); font-family: var(--font-mono);">ppo.gov.eg/traffic</code> (后台每 3 分钟自动探测采样，数据保存在本地)
+            </div>
+          </div>
+        </div>
+        <div class="monitor-actions">
+          <button type="button" class="btn btn-outline" id="btn-ping-server-now" style="padding: 6px 12px; font-size: 12px;">
+            <span id="ping-btn-text">⚡ 立即测速 (Ping)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 60 格 Uptime 条状图 (GitHub 风格) -->
+      <div class="uptime-strip-container">
+        <div class="uptime-bars-flex" id="uptime-bars-strip">
+          <!-- 动态渲染 60 个竖条 -->
+        </div>
+        <div class="uptime-footer-row">
+          <span>⏮️ 60 次探测前</span>
+          <span style="font-weight: 600; color: #fff;">📊 近期服务可用率: <strong id="monitor-uptime-rate" style="color: #34d399;">100.0%</strong></span>
+          <span>⚡ 最近采样点 (当前) ⏭️</span>
+        </div>
+      </div>
+
+      <!-- 核心指标网格 -->
+      <div class="monitor-metrics-grid">
+        <div class="metric-mini-box">
+          <div class="metric-mini-label">⚡ 最新响应延迟</div>
+          <div class="metric-mini-val green" id="metric-latest-latency">- ms</div>
+        </div>
+        <div class="metric-mini-box">
+          <div class="metric-mini-label">⏳ 平均响应耗时</div>
+          <div class="metric-mini-val gold" id="metric-avg-latency">- ms</div>
+        </div>
+        <div class="metric-mini-box">
+          <div class="metric-mini-label">🌐 官方网关 HTTP 状态</div>
+          <div class="metric-mini-val" id="metric-http-status">200 OK</div>
+        </div>
+        <div class="metric-mini-box">
+          <div class="metric-mini-label">🚨 探测异常/超时次数</div>
+          <div class="metric-mini-val" id="metric-outage-count">0 次</div>
+        </div>
+      </div>
+    </section>
+
     <!-- 统计仪表盘 -->
     <section class="ppo-stats-grid">
       <div class="stat-card">

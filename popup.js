@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initDOM();
   bindEvents();
   loadProfilesFromStorage();
+  initPopupServerHealth();
 });
 
 function initDOM() {
@@ -746,4 +747,44 @@ function showToast(msg, isError = false) {
   setTimeout(() => {
     toast.classList.remove('show');
   }, 2200);
+}
+
+function initPopupServerHealth() {
+  loadPopupServerHealth();
+
+  document.getElementById('popup-btn-ping')?.addEventListener('click', () => {
+    const textEl = document.getElementById('popup-health-status-text');
+    const pingBtn = document.getElementById('popup-btn-ping');
+    if (textEl) textEl.textContent = '⏳ 探测中...';
+    if (pingBtn) pingBtn.disabled = true;
+
+    chrome.runtime.sendMessage({ action: 'ping_server_now' }, () => {
+      if (pingBtn) pingBtn.disabled = false;
+      loadPopupServerHealth();
+    });
+  });
+}
+
+function loadPopupServerHealth() {
+  const SERVER_PROBES_STORAGE_KEY = 'ppo_traffic_server_probes_v1';
+  chrome.storage.local.get([SERVER_PROBES_STORAGE_KEY], (res) => {
+    const list = res[SERVER_PROBES_STORAGE_KEY] || [];
+    const textEl = document.getElementById('popup-health-status-text');
+    if (!textEl) return;
+
+    if (list.length === 0) {
+      textEl.textContent = '🟢 正常';
+      return;
+    }
+
+    const latest = list[list.length - 1];
+    const lat = latest.latencyMs || 0;
+    if (latest.status === 'down') {
+      textEl.innerHTML = `<span style="color: #f87171;">🔴 官方脱机/超时 (${lat}ms)</span>`;
+    } else if (latest.status === 'degraded') {
+      textEl.innerHTML = `<span style="color: #fbbf24;">🟡 响应缓慢 (${lat}ms)</span>`;
+    } else {
+      textEl.innerHTML = `<span style="color: #34d399;">🟢 极速正常 (${lat}ms)</span>`;
+    }
+  });
 }

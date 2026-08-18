@@ -936,7 +936,176 @@ function handleImportProfiles(e) {
   reader.readAsText(file);
 }
 
-// 页面加载就绪后初始化配置管理器
+// 页面加载就绪后初始化配置管理器与服务器监控看板
 document.addEventListener('DOMContentLoaded', () => {
   initProfilesManager();
+  initServerHealthMonitor();
 });
+
+// 官方服务器健康状态与 GitHub 风格 Uptime 状态条监控
+const SERVER_PROBES_STORAGE_KEY = 'ppo_traffic_server_probes_v1';
+
+function initServerHealthMonitor() {
+  loadAndRenderServerHealth();
+
+  // 绑定手动测速按钮
+  const pingBtn = document.getElementById('btn-ping-server-now');
+  pingBtn?.addEventListener('click', () => {
+    handleManualPing();
+  });
+
+  // 监听后台探测数据更新
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes[SERVER_PROBES_STORAGE_KEY]) {
+        renderServerHealthUI(changes[SERVER_PROBES_STORAGE_KEY].newValue || []);
+      }
+    });
+  }
+}
+
+function loadAndRenderServerHealth() {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get([SERVER_PROBES_STORAGE_KEY], (res) => {
+      const list = res[SERVER_PROBES_STORAGE_KEY] || [];
+      if (list.length === 0) {
+        // 若尚无数据，立即触发一次探测
+        handleManualPing();
+      } else {
+        renderServerHealthUI(list);
+      }
+    });
+  }
+}
+
+function handleManualPing() {
+  const pingBtn = document.getElementById('btn-ping-server-now');
+  const pingText = document.getElementById('ping-btn-text');
+  if (pingText) pingText.innerHTML = '⏳ 正在探测响应速度...';
+  if (pingBtn) pingBtn.disabled = true;
+
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    chrome.runtime.sendMessage({ action: 'ping_server_now' }, (resp) => {
+      if (pingText) pingText.innerHTML = '⚡ 立即测速 (Ping)';
+      if (pingBtn) pingBtn.disabled = false;
+
+      chrome.storage.local.get([SERVER_PROBES_STORAGE_KEY], (res) => {
+        const list = res[SERVER_PROBES_STORAGE_KEY] || [];
+        renderServerHealthUI(list);
+      });
+    });
+  } else {
+    setTimeout(() => {
+      if (pingText) pingText.innerHTML = '⚡ 立即测速 (Ping)';
+      if (pingBtn) pingBtn.disabled = false;
+    }, 1500);
+  }
+}
+
+function renderServerHealthUI(probes) {
+  const barsContainer = document.getElementById('uptime-bars-strip');
+  const statusBadge = document.getElementById('monitor-status-badge');
+  const statusText = document.getElementById('monitor-status-text');
+  const uptimeRateEl = document.getElementById('monitor-uptime-rate');
+  const latestLatencyEl = document.getElementById('metric-latest-latency');
+  const avgLatencyEl = document.getElementById('metric-avg-latency');
+  const httpStatusEl = document.getElementById('metric-http-status');
+  const outageCountEl = document.getElementById('metric-outage-count');
+
+  if (!barsContainer) return;
+
+  // 1. 渲染 60 个 Uptime 柱状格 (左边为较早数据，右边为最新数据)
+  const TOTAL_BARS = 60;
+  const recentProbes = probes.slice(-TOTAL_BARS);
+  const emptyPaddingCount = Math.max(0, TOTAL_BARS - recentProbes.length);
+
+  let barsHTML = '';
+
+  // 填充尚未采样的空条
+  for (let i = 0; i < emptyPaddingCount; i++) {
+    barsHTML += `<div class="uptime-bar empty" title="尚未采集数据"></div>`;
+  }
+
+  // 填充已采样的探测点
+  let totalLatencySum = 0;
+  let successfulProbesCount = 0;
+  let outageCount = 0;
+
+  recentProbes.forEach(p => {
+    let barClass = 'operational';
+    let statusLabel = '正常';
+
+    if (p.status === 'down' || p.httpStatus === 'timeout' || p.httpStatus === 'error' || p.latencyMs >= 8000) {
+      barClass = 'down';
+      statusLabel = '超时/脱机';
+      outageCount++;
+    } else if (p.status === 'degraded' || p.latencyMs >= 4000) {
+      barClass = 'degraded';
+      statusLabel = '缓慢拥堵';
+      successfulProbesCount++;
+      totalLatencySum += p.latencyMs;
+    } else {
+      barClass = 'operational';
+      statusLabel = '极速畅通';
+      successfulProbesCount++;
+      totalLatencySum += p.latencyMs;
+    }
+
+    const heightPct = p.latencyMs ? Math.min(100, Math.max(25, Math.round((p.latencyMs / 6000) * 100))) : 40;
+    const tooltip = `${p.timeStr || ''} (${p.dateStr || ''})\n状态: ${statusLabel}\n耗时: ${p.latencyMs || 0} ms\nHTTP: ${p.httpStatus || 200}`;
+
+    barsHTML += `
+      <div class="uptime-bar ${barClass}" 
+           style="height: ${barClass === 'down' ? '100%' : heightPct + '%'};" 
+           title="${tooltip}"></div>
+    `;
+  });
+
+  barsContainer.innerHTML = barsHTML;
+
+  // 2. 计算指标数据
+  const latestProbe = recentProbes[recentProbes.length - 1];
+  const sampleCount = recentProbes.length;
+  const uptimePct = sampleCount > 0 ? (((sampleCount - outageCount) / sampleCount) * 100).toFixed(1) : '100.0';
+  const avgLatency = successfulProbesCount > 0 ? Math.round(totalLatencySum / successfulProbesCount) : 0;
+
+  if (uptimeRateEl) {
+    uptimeRateEl.textContent = `${uptimePct}%`;
+    uptimeRateEl.style.color = parseFloat(uptimePct) >= 95 ? '#34d399' : (parseFloat(uptimePct) >= 80 ? '#fbbf24' : '#f87171');
+  }
+
+  if (outageCountEl) {
+    outageCountEl.textContent = `${outageCount} 次`;
+    outageCountEl.className = `metric-mini-val ${outageCount > 0 ? 'red' : 'green'}`;
+  }
+
+  if (avgLatencyEl) {
+    avgLatencyEl.textContent = avgLatency > 0 ? `${avgLatency} ms` : '-';
+  }
+
+  if (latestProbe) {
+    const lat = latestProbe.latencyMs;
+    if (latestLatencyEl) {
+      latestLatencyEl.textContent = `${lat} ms`;
+      latestLatencyEl.className = `metric-mini-val ${latestProbe.status === 'down' ? 'red' : (latestProbe.status === 'degraded' ? 'amber' : 'green')}`;
+    }
+
+    if (httpStatusEl) {
+      httpStatusEl.textContent = latestProbe.httpStatus === 'timeout' ? '504 Timeout' : `${latestProbe.httpStatus || 200} OK`;
+      httpStatusEl.className = `metric-mini-val ${latestProbe.status === 'down' ? 'red' : 'gold'}`;
+    }
+
+    if (statusBadge && statusText) {
+      if (latestProbe.status === 'down') {
+        statusBadge.className = 'monitor-status-pill down';
+        statusText.textContent = `🔴 官方服务器超时/脱机 (${lat}ms)`;
+      } else if (latestProbe.status === 'degraded') {
+        statusBadge.className = 'monitor-status-pill degraded';
+        statusText.textContent = `🟡 官方响应缓慢拥堵 (${lat}ms)`;
+      } else {
+        statusBadge.className = 'monitor-status-pill operational';
+        statusText.textContent = `🟢 官方连接极速正常 (${lat}ms)`;
+      }
+    }
+  }
+}

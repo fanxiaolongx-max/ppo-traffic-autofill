@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "PPO Traffic AutoFill (مساعد مخالفات المرور)",
+  "version": "1.1.0",
+  "description": "自动填写埃及公诉机关交通违章查询表单 (PPO Traffic Violations Auto-fill Extension)",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://www.ppo.gov.eg/*",
+    "*://ppo.gov.eg/*",
+    "*://*.ppo.gov.eg/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PPO 交通违章表单自动填表器"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.ppo.gov.eg/*",
+        "*://ppo.gov.eg/*",
+        "*://*.ppo.gov.eg/*"
+      ],
+      "js": ["utils.js", "content.js"],
+      "css": ["floating-ui.css"],
+      "run_at": "document_end"
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PPO 车牌违章自动填表器</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="ppo-popup-wrap">
+    <!-- 头部 -->
+    <div class="ppo-header">
+      <div class="ppo-title-wrap">
+        <div class="ppo-badge-icon">🚗</div>
+        <div>
+          <div class="ppo-title-text">PPO 车牌违章填表器</div>
+          <span class="ppo-title-sub">مساعد مخالفات رخص المركبات</span>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button type="button" class="ppo-icon-btn" id="ppo-btn-open-portal" title="在浏览器中直接打开官方查询网页">🌐</button>
+      </div>
+    </div>
+
+    <!-- 违章罚款结果捕捉展示横幅 -->
+    <div class="ppo-result-banner" id="ppo-result-banner">
+      <div class="ppo-result-header">
+        <div class="ppo-result-title">
+          <span>📋 最新查询结果 (بيانات المخالفات)</span>
+        </div>
+        <span class="ppo-result-time" id="ppo-result-time">刚刚更新</span>
+      </div>
+      <div class="ppo-result-grid">
+        <div class="ppo-result-card highlight">
+          <div class="ppo-result-label">💰 总罚款 (اجمالي الغرامات)</div>
+          <div class="ppo-result-val" id="ppo-res-total">0 جنيه</div>
+        </div>
+        <div class="ppo-result-card">
+          <div class="ppo-result-label">🚨 笔数 (عدد المخالفات)</div>
+          <div class="ppo-result-val" id="ppo-res-count">0</div>
+        </div>
+        <div class="ppo-result-card">
+          <div class="ppo-result-label">🤝 和解罚款 (التصالح)</div>
+          <div class="ppo-result-val" id="ppo-res-reconcile">0 جنيه</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 表单主体 -->
+    <div class="ppo-body">
+      <!-- 常用人员/配置切换管理栏 -->
+      <div class="ppo-profile-section">
+        <div class="ppo-profile-title">
+          <span>👤 常用人员/车辆配置管理</span>
+          <span style="font-size: 11px; font-weight: normal; color: var(--ppo-text-muted);">快速切换人员</span>
+        </div>
+        <div class="ppo-profile-controls">
+          <select class="ppo-profile-select" id="ppo-profile-dropdown">
+            <option value="">-- 选择已存人员配置 (点击切换) --</option>
+          </select>
+          <button type="button" class="ppo-profile-btn" id="ppo-btn-toggle-save" title="将当前填写的表单存为新人员配置">
+            <span>➕ 存为配置</span>
+          </button>
+          <button type="button" class="ppo-profile-btn danger" id="ppo-btn-delete-profile" title="删除当前选中的人员配置">
+            <span>🗑️</span>
+          </button>
+        </div>
+
+        <!-- 展开保存备注输入框 -->
+        <div class="ppo-save-expander" id="ppo-save-expander">
+          <div class="ppo-save-row">
+            <input type="text" class="ppo-input" id="ppo-in-remark" placeholder="输入备注名称 (如: 张三-丰田车 / 李四)" maxlength="25">
+            <button type="button" class="ppo-profile-btn" id="ppo-btn-confirm-save" style="background: var(--ppo-primary); border-color: var(--ppo-gold);">
+              <span>💾 保存</span>
+            </button>
+            <button type="button" class="ppo-profile-btn" id="ppo-btn-cancel-save">
+              <span>✕</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 数字转换格式选择 -->
+      <div class="ppo-section">
+        <div class="ppo-section-title">
+          <span>数字转换格式 (Numeral Mode)</span>
+          <span class="ar-hint">نمط الأرقام</span>
+        </div>
+        <div class="ppo-segmented" id="ppo-num-mode-switch">
+          <button class="ppo-segment-btn active" data-mode="latin">原样 (0-9)</button>
+          <button class="ppo-segment-btn" data-mode="eastern">埃及数字 (٠-٩)</button>
+          <button class="ppo-segment-btn" data-mode="persian">波斯数字 (۰-۹)</button>
+        </div>
+      </div>
+
+      <!-- 车牌信息 -->
+      <div class="ppo-section">
+        <div class="ppo-section-title">
+          <span>车牌号码 (License Plate)</span>
+          <span class="ar-hint">رقم الرخصة (حروف وأرقام)</span>
+        </div>
+
+        <div class="ppo-label" style="margin-bottom: 2px;">
+          <span>字母 (字1 / 字2 / 字3) 与数字:</span>
+        </div>
+
+        <div class="ppo-plate-box-wrap">
+          <div class="ppo-letter-item">
+            <input type="text" class="ppo-letter-input active-focus" id="ppo-in-letter1" maxlength="1" placeholder="字1" title="第1个字母" autocomplete="off" spellcheck="false">
+            <span>字1</span>
+          </div>
+          <div class="ppo-letter-item">
+            <input type="text" class="ppo-letter-input" id="ppo-in-letter2" maxlength="1" placeholder="字2" title="第2个字母" autocomplete="off" spellcheck="false">
+            <span>字2</span>
+          </div>
+          <div class="ppo-letter-item">
+            <input type="text" class="ppo-letter-input" id="ppo-in-letter3" maxlength="1" placeholder="字3" title="第3个字母" autocomplete="off" spellcheck="false">
+            <span>字3</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 3px;">
+            <input type="text" class="ppo-plate-num-input" id="ppo-in-platenum" placeholder="车牌数字 (如 1234)" maxlength="6" autocomplete="off" spellcheck="false">
+            <span style="font-size: 11px; color: var(--ppo-text-muted); text-align: center;">车牌数字</span>
+          </div>
+        </div>
+
+        <!-- 快捷字母点选键盘 (免安装阿文输入法) -->
+        <div style="margin-top: 10px; font-size: 11.5px; color: var(--ppo-text-muted);">
+          快捷字母面板 (点击直接填入当前高亮字框):
+        </div>
+        <div class="ppo-letter-picker" id="ppo-letter-palette"></div>
+
+        <!-- 实时转换预览 -->
+        <div class="ppo-preview-pill" id="ppo-plate-preview">
+          <span>实时车牌预览:</span>
+          <strong id="ppo-preview-val">-</strong>
+        </div>
+      </div>
+
+      <!-- 所有者信息 -->
+      <div class="ppo-section">
+        <div class="ppo-section-title">
+          <span>所有者信息 (Owner Details)</span>
+          <span class="ar-hint">بيانات المالك</span>
+        </div>
+
+        <!-- 证件类型单选 -->
+        <div class="ppo-row">
+          <div class="ppo-col">
+            <label class="ppo-label">证件类型</label>
+            <div class="ppo-radio-group">
+              <label class="ppo-radio-label">
+                <input type="radio" name="ppo_owner_type" value="passport" checked> 护照 (جواز سفر)
+              </label>
+              <label class="ppo-radio-label">
+                <input type="radio" name="ppo_owner_type" value="national_id"> 身份证 (رقم قومي)
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 护照专属选项区域 -->
+        <div id="ppo-passport-fields">
+          <div class="ppo-row" style="margin-top: 8px;">
+            <div class="ppo-col">
+              <label class="ppo-label">身份属性</label>
+              <div class="ppo-radio-group">
+                <label class="ppo-radio-label">
+                  <input type="radio" name="ppo_foreign_type" value="foreign" checked> 外籍 (أجنبي)
+                </label>
+                <label class="ppo-radio-label">
+                  <input type="radio" name="ppo_foreign_type" value="citizen"> 埃及本国 (مواطن)
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="ppo-row" style="margin-top: 8px;">
+            <div class="ppo-col">
+              <label class="ppo-label">
+                <span>护照签发国 / 国籍 (默认中国)</span>
+                <span class="ar-tag">الجنسية</span>
+              </label>
+              <select class="ppo-select" id="ppo-in-country"></select>
+            </div>
+          </div>
+
+          <div class="ppo-row" style="margin-top: 8px;">
+            <div class="ppo-col">
+              <label class="ppo-label">
+                <span>护照号码</span>
+                <span class="ar-tag">رقم الجواز</span>
+              </label>
+              <input type="text" class="ppo-input" id="ppo-in-passport-no" placeholder="输入护照号 (如 EA1234567 / 1234567)" maxlength="20">
+              <div class="ppo-hint-text highlight" id="ppo-passport-hint">
+                💡 提示：官方系统要求纯数字。若输入前缀字母（如 EA/E/G），将自动去除字母填入纯数字。
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 身份证号输入 (当切换为身份证时显示) -->
+        <div id="ppo-national-id-fields" style="display: none; margin-top: 8px;">
+          <div class="ppo-col">
+            <label class="ppo-label">
+              <span>国民身份证号 (14位)</span>
+              <span class="ar-tag">الرقم القومي</span>
+            </label>
+            <input type="text" class="ppo-input" id="ppo-in-national-id" placeholder="输入 14 位埃及身份证号" maxlength="14">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部操作按钮 -->
+    <div class="ppo-footer">
+      <button type="button" class="ppo-btn-main" id="ppo-btn-fill-submit">
+        <span>🔍 立即查询 (填入并自动查询)</span>
+      </button>
+      
+      <div class="ppo-btn-group">
+        <button type="button" class="ppo-btn-sub" id="ppo-btn-fill">
+          <span>⚡ 仅填入表单</span>
+        </button>
+        <button type="button" class="ppo-btn-sub" id="ppo-btn-clear" title="清空所有输入">
+          <span>🧹 清空</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 提示 Toast -->
+    <div class="ppo-toast" id="ppo-toast">已成功！</div>
+  </div>
+
+  <script src="utils.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

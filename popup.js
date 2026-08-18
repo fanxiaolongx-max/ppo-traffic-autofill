@@ -42,7 +42,7 @@ const COMMON_LETTERS = [
 let activeLetterTarget = 'letter1';
 let numeralMode = 'latin';
 let currentProfileId = null;
-let currentQueryMode = 'direct'; // 默认新逻辑：极速直连
+let currentQueryMode = 'tab_ui'; // 默认旧逻辑：网页前台稳定模式
 
 const STORAGE_KEY = 'ppo_traffic_profiles_v2';
 const LAST_ACTIVE_KEY = 'ppo_traffic_last_active_id';
@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initQueryModeSwitcher() {
   chrome.storage.local.get([QUERY_MODE_KEY], (res) => {
-    currentQueryMode = res[QUERY_MODE_KEY] || 'direct';
+    currentQueryMode = res[QUERY_MODE_KEY] || 'tab_ui';
     updateQueryModeUI(currentQueryMode);
   });
 

@@ -677,7 +677,7 @@ function dispatchQueryTask(queryData) {
 // 统一对外查询调度入口 (根据用户偏好模式分发)
 function handleOpenAndFill(data, autoSubmit, sendResponse) {
   chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-    const mode = res.ppo_traffic_query_mode || 'direct'; // 默认新逻辑：极速静默真实渲染
+    const mode = res.ppo_traffic_query_mode || 'tab_ui'; // 默认：网页前台稳定模式
 
     if (mode === 'direct') {
       executeSilentTabQuery(data)

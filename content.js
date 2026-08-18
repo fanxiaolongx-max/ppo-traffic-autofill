@@ -1246,6 +1246,12 @@
 
       if (totalFine || violationCount) {
         // 标记本次查询已完成捕获
+        const captureSign = `${totalFine}_${violationCount}_${reconcileFine}`;
+        if (lastCapturedSign === captureSign) {
+          return; // 已捕获过相同结果，避免重复弹窗与入库
+        }
+        lastCapturedSign = captureSign;
+
         stopQueryWatchdog();
         isAwaitingQueryResult = false;
         hideDiagnosticBanner();
@@ -1768,13 +1774,16 @@
     updatePreview();
   }
 
+  let toastTimer = null;
+
   function showToast(msg, isError = false) {
     const toast = document.getElementById('ppo-toast');
     if (!toast) return;
+    if (toastTimer) clearTimeout(toastTimer);
     toast.innerText = msg;
     toast.style.background = isError ? 'var(--ppo-danger)' : 'var(--ppo-success)';
     toast.classList.add('show');
-    setTimeout(() => {
+    toastTimer = setTimeout(() => {
       toast.classList.remove('show');
     }, 2800);
   }

@@ -670,7 +670,7 @@ function refillAndQueryRecord(rec) {
   };
 
   chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-    const mode = res.ppo_traffic_query_mode || 'direct';
+    const mode = res.ppo_traffic_query_mode || 'tab_ui'; // 默认网页前台模式
 
     if (mode === 'direct') {
       const btnRefill = document.querySelector(`.btn-refill[data-id="${rec.id}"]`);
@@ -1072,7 +1072,7 @@ function renderProfilesManagerUI(list) {
       const target = list.find(p => p.id === id);
       if (target) {
         chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-          const mode = res.ppo_traffic_query_mode || 'direct';
+          const mode = res.ppo_traffic_query_mode || 'tab_ui';
           if (mode === 'direct') {
             btn.textContent = '⏳ 查询中...';
             chrome.runtime.sendMessage({
@@ -1186,7 +1186,7 @@ const QUERY_MODE_STORAGE_KEY = 'ppo_traffic_query_mode';
 
 function initHistoryQueryModeSwitcher() {
   chrome.storage.local.get([QUERY_MODE_STORAGE_KEY], (res) => {
-    const mode = res[QUERY_MODE_STORAGE_KEY] || 'direct';
+    const mode = res[QUERY_MODE_STORAGE_KEY] || 'tab_ui';
     updateHistoryModeUI(mode);
   });
 

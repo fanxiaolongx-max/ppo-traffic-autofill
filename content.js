@@ -1133,27 +1133,26 @@
   }
 
   let lastCapturedSign = '';
+  let lastSavedRecordFingerprint = '';
+  let lastSavedRecordTimestamp = 0;
 
   function checkAndScrapeResults() {
     const isSummaryPage = window.location.href.includes('traffic-fines-summary');
     
-    // 性能极速放行：在普通表单页且未处于等待状态时，不执行重度 DOM 遍历与 Reflow
-    const errorDialog = document.querySelector('.ui-dialog, .t-Alert--error, div[role="dialog"]');
-    if (!isSummaryPage && !errorDialog && !isAwaitingQueryResult) {
+    // 严格限制：仅在真正到达官方结果摘要页或正在主动等待查询结果时才执行抓取
+    if (!isSummaryPage && !isAwaitingQueryResult) {
       return;
     }
 
-    const pageText = (document.body ? document.body.innerText : '') || '';
-    const hasSummaryKeywords = pageText.includes('اجمالي الغرامات الشاملة') || pageText.includes('عدد المخالفات') || pageText.includes('بيانات المخالفات');
-
-    // 1. 检查是否有官方错误弹窗 / 报错区域
+    // 1. 检查是否有官方错误弹窗 / 报错区域 (排除插件自身)
+    const errorDialog = document.querySelector('.ui-dialog:not(#ppo-autofill-container), .t-Alert--error, div[role="dialog"]:not(#ppo-autofill-container)');
     const hasError = errorDialog && (errorDialog.innerText.includes('خطأ') || errorDialog.innerText.includes('حدث خطأ') || errorDialog.innerText.includes('الخدمة غير متاحة') || errorDialog.innerText.includes('انتهت الجلسة'));
 
     if (hasError) {
       stopQueryWatchdog();
       isAwaitingQueryResult = false;
       const dialogText = errorDialog ? errorDialog.innerText : '';
-      const classified = classifyOfficialError(pageText, dialogText);
+      const classified = classifyOfficialError('', dialogText);
 
       showDiagnosticBanner(classified.title, `${classified.detail} ${classified.suggestion}`, true);
       showToast(classified.title, true);
@@ -1163,12 +1162,11 @@
         violationCount: '0',
         reconcileFine: '0',
         time: new Date().toLocaleTimeString()
-      }, `[官方报错]\n类型: ${classified.title}\n详情: ${classified.detail}\n原文: ${dialogText || pageText.slice(0, 300)}`);
+      }, `[官方报错]\n类型: ${classified.title}\n详情: ${classified.detail}\n原文: ${dialogText}`);
 
       if (classified.autoDismiss) {
-        // 自动点击错误弹窗的「موافق (确定)」或「Close/✕」按钮恢复界面
         const okBtn = Array.from(document.querySelectorAll('button, a, input[type="button"]')).find(b => 
-          b.innerText && (b.innerText.includes('موافق') || b.innerText.includes('Close') || b.innerText.includes('OK') || b.innerText.includes('إغلاق'))
+          !b.closest('#ppo-autofill-container') && b.innerText && (b.innerText.includes('موافق') || b.innerText.includes('Close') || b.innerText.includes('OK') || b.innerText.includes('إغلاق'))
         );
         if (okBtn) {
           setTimeout(() => {
@@ -1182,8 +1180,16 @@
       return;
     }
 
+    // 获取官方页面原始文本 (严格排除插件自身 DOM)
+    let officialPageText = '';
+    document.querySelectorAll('.t-Body-main, .t-Region, #main, .apex-item-display-only').forEach(el => {
+      if (!el.closest('#ppo-autofill-container') && !el.closest('#ppo-toggle-bubble')) {
+        officialPageText += ' ' + (el.innerText || '');
+      }
+    });
+
     // 2. 检查是否有无违章提示 (如: لا توجد مخالفات)
-    if (pageText.includes('لا توجد مخالفات') || pageText.includes('لا يوجد مخالفات')) {
+    if (officialPageText.includes('لا توجد مخالفات') || officialPageText.includes('لا يوجد مخالفات')) {
       stopQueryWatchdog();
       isAwaitingQueryResult = false;
       hideDiagnosticBanner();
@@ -1198,16 +1204,19 @@
       return;
     }
 
-    // 3. 检测结果页数据 (只要处于结果摘要页或包含违章结果关键字)
-    if (isSummaryPage || hasSummaryKeywords) {
+    // 3. 仅在官方结果摘要页或包含官方汇总标题时检测罚款数据
+    const hasOfficialSummary = officialPageText.includes('اجمالي الغرامات الشاملة') || officialPageText.includes('بيانات المخالفات');
+    if (isSummaryPage || hasOfficialSummary) {
       let totalFine = '';
       let violationCount = '';
       let reconcileFine = '';
 
-      // 扫描页面包含卡片结构的容器
-      const allDivs = Array.from(document.querySelectorAll('div, span, td'));
+      // 仅扫描官方 DOM 容器，严格排除插件自己的卡片
+      const allDivs = Array.from(document.querySelectorAll('.t-Region div, .t-Region span, .t-Region td, .apex-item-display-only'));
 
       allDivs.forEach(el => {
+        if (el.closest('#ppo-autofill-container') || el.closest('#ppo-toggle-bubble')) return;
+
         const text = el.innerText?.trim() || '';
         if (text === 'اجمالي الغرامات الشاملة') {
           const parent = el.closest('.t-Region, div') || el.parentElement;
@@ -1230,25 +1239,23 @@
         }
       });
 
-      // 如果未通过精确父元素捕获，通过正则提取
       if (!totalFine) {
-        const m = pageText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
+        const m = officialPageText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
         if (m) totalFine = m[1].replace(/\n/g, ' ').trim();
       }
       if (!violationCount) {
-        const m = pageText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/);
+        const m = officialPageText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/);
         if (m) violationCount = m[1].trim();
       }
       if (!reconcileFine) {
-        const m = pageText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
+        const m = officialPageText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
         if (m) reconcileFine = m[1].replace(/\n/g, ' ').trim();
       }
 
       if (totalFine || violationCount) {
-        // 标记本次查询已完成捕获
         const captureSign = `${totalFine}_${violationCount}_${reconcileFine}`;
         if (lastCapturedSign === captureSign) {
-          return; // 已捕获过相同结果，避免重复弹窗与入库
+          return; // 已捕获过，避免重复入库
         }
         lastCapturedSign = captureSign;
 
@@ -1306,17 +1313,43 @@
       });
     } catch (e) {}
 
-    const pageSnapshot = (document.body ? document.body.innerText || '' : '').slice(0, 3000);
-    saveQueryHistoryRecord('has_fine', res, pageSnapshot);
+    // 获取官方纯净快照
+    let officialSnapshot = '';
+    document.querySelectorAll('.t-Body-main, .t-Region, #main').forEach(el => {
+      if (!el.closest('#ppo-autofill-container') && !el.closest('#ppo-toggle-bubble')) {
+        officialSnapshot += ' ' + (el.innerText || '');
+      }
+    });
+    saveQueryHistoryRecord('has_fine', res, officialSnapshot.slice(0, 3000));
 
     showToast(`🎉 已成功获取罚款信息：总计 ${res.totalFine} (${res.violationCount} 笔违章)`);
   }
 
   let activeQueryData = null;
-  let lastRecordedHistoryKey = '';
 
   function saveQueryHistoryRecord(status, resultObj, rawSnapshot) {
     if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+
+    let req = activeQueryData;
+    if (!req) {
+      try {
+        const cached = sessionStorage.getItem('ppo_active_query_req');
+        if (cached) req = JSON.parse(cached);
+      } catch (e) {}
+    }
+
+    const letters = [req?.letter1, req?.letter2, req?.letter3].filter(Boolean).join(' ');
+    const platenum = req?.platenum || '';
+    const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
+
+    // 严格防重入：同一车辆+罚款数据在 30 秒内仅保存 1 条记录
+    const fp = `${fullPlate}_${resultObj.totalFine}_${resultObj.violationCount}_${status}`;
+    const now = Date.now();
+    if (lastSavedRecordFingerprint === fp && (now - lastSavedRecordTimestamp < 30000)) {
+      return;
+    }
+    lastSavedRecordFingerprint = fp;
+    lastSavedRecordTimestamp = now;
 
     chrome.storage.local.get([
       HISTORY_STORAGE_KEY,

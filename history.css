@@ -113,9 +113,58 @@ body {
 
 .nav-actions {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
   position: relative;
+}
+
+.nav-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* 模式切换胶囊样式 */
+.mode-switch-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 3px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.mode-switch-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.mode-switch-group {
+  display: flex;
+  gap: 3px;
+}
+
+.btn-mode-pill {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+}
+
+.btn-mode-pill.active {
+  background: var(--primary-gold);
+  color: #000;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(212, 175, 55, 0.3);
 }
 
 /* 基础按钮样式 */
@@ -131,6 +180,12 @@ body {
   transition: all 0.2s ease;
   border: 1px solid transparent;
   user-select: none;
+}
+
+.btn-sm {
+  padding: 5px 11px;
+  font-size: 12px;
+  gap: 6px;
 }
 
 .btn-primary {

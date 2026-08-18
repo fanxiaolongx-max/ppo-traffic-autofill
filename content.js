@@ -1110,29 +1110,44 @@
   }
 
   // 4. 实时监听并捕捉页面上的违章罚款信息与官方报错弹窗
+  function ensureFloatingUIExists() {
+    if (!document.getElementById('ppo-autofill-container') && document.body) {
+      createFloatingUI();
+    }
+  }
+
   function startResultObserver() {
-    // 监听 DOM 动态变化（Oracle APEX 局部刷新与弹窗）
+    // 监听 DOM 动态变化（Oracle APEX 局部刷新、SPA 切换与弹窗）
     const observer = new MutationObserver(() => {
+      ensureFloatingUIExists();
       checkAndScrapeResults();
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+    }
 
-    // 轮询辅助检测
-    setInterval(checkAndScrapeResults, 500);
+    // 轮询辅助检测 (防漏检与保活)
+    setInterval(() => {
+      ensureFloatingUIExists();
+      checkAndScrapeResults();
+    }, 600);
   }
 
   let lastCapturedSign = '';
 
   function checkAndScrapeResults() {
     const isSummaryPage = window.location.href.includes('traffic-fines-summary');
-    const pageText = document.body.innerText || '';
-    const hasSummaryKeywords = pageText.includes('اجمالي الغرامات الشاملة') || pageText.includes('عدد المخالفات');
+    const pageText = (document.body ? document.body.innerText : '') || '';
+    const hasSummaryKeywords = pageText.includes('اجمالي الغرامات الشاملة') || pageText.includes('عدد المخالفات') || pageText.includes('بيانات المخالفات');
 
-    // 如果已进入结果页，立即终止页面后续无休止的慢速资源转圈
+    // 确保悬浮窗在结果页也能正常渲染显示
+    ensureFloatingUIExists();
+
+    // 如果已进入结果页，终止后续多余的网络阻塞
     if (isSummaryPage || hasSummaryKeywords) {
       try {
         window.stop();
@@ -1286,68 +1301,90 @@
   function saveQueryHistoryRecord(status, resultObj, rawSnapshot) {
     if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
 
-    let req = activeQueryData;
-    if (!req) {
-      try {
-        const cached = sessionStorage.getItem('ppo_active_query_req');
-        if (cached) req = JSON.parse(cached);
-      } catch (e) {}
-    }
-    if (!req) {
-      req = getFormDataFromUI();
-    }
-
-    const platenum = req?.platenum || '';
-    const letters = [req?.letter1, req?.letter2, req?.letter3].filter(Boolean).join(' ');
-    const fullPlate = `${letters} ${platenum}`.trim();
-    const passportNo = req?.passportNo || req?.nationalId || '';
-
-    // 防重机制 (15秒内相同车牌与结果不重复入库)
-    const dedupKey = `${fullPlate}_${passportNo}_${resultObj?.totalFine || ''}_${resultObj?.violationCount || ''}_${status}`;
-    const now = Date.now();
-    if (lastRecordedHistoryKey === dedupKey) {
-      return;
-    }
-    lastRecordedHistoryKey = dedupKey;
-
-    const countryObj = COUNTRY_OPTIONS.find(c => c.value === req?.country);
-    const countryName = countryObj ? countryObj.text : (req?.country === '10206' ? 'الصين (中国 / China)' : (req?.country || '中国'));
-
-    const historyRecord = {
-      id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
-      timestamp: now,
-      dateTime: new Date().toLocaleString('zh-CN', { hour12: false }),
-      status: status, // 'has_fine' | 'clean' | 'error'
-      request: {
-        letter1: req?.letter1 || '',
-        letter2: req?.letter2 || '',
-        letter3: req?.letter3 || '',
-        plateLetters: letters,
-        platenum: platenum,
-        fullPlate: fullPlate,
-        ownerType: req?.ownerType || 'passport',
-        foreignType: req?.foreignType || 'foreign',
-        country: req?.country || '10206',
-        countryName: countryName,
-        passportNo: req?.passportNo || '',
-        nationalId: req?.nationalId || '',
-        numeralMode: req?.numeralMode || numeralMode,
-        profileName: currentProfileId ? '已存配置' : '手动输入',
-        rawRequestJson: JSON.stringify(req, null, 2)
-      },
-      result: {
-        totalFine: resultObj?.totalFine || '0 جنيه',
-        violationCount: resultObj?.violationCount || '0',
-        reconcileFine: resultObj?.reconcileFine || '0 جنيه',
-        time: resultObj?.time || new Date().toLocaleTimeString(),
-        rawResponseText: rawSnapshot || ''
+    chrome.storage.local.get([
+      HISTORY_STORAGE_KEY,
+      'ppo_active_query_req',
+      'pendingPpoTask',
+      'ppo_traffic_live_draft',
+      STORAGE_KEY,
+      LAST_ACTIVE_KEY
+    ], (store) => {
+      let req = activeQueryData;
+      if (!req) {
+        try {
+          const cached = sessionStorage.getItem('ppo_active_query_req');
+          if (cached) req = JSON.parse(cached);
+        } catch (e) {}
       }
-    };
+      if (!req) req = store.ppo_active_query_req;
+      if (!req) req = store.pendingPpoTask?.data;
+      if (!req && store.ppo_traffic_live_draft && (store.ppo_traffic_live_draft.platenum || store.ppo_traffic_live_draft.letter1)) {
+        req = store.ppo_traffic_live_draft;
+      }
+      if (!req && store[STORAGE_KEY] && store[STORAGE_KEY].length > 0) {
+        const lastId = store[LAST_ACTIVE_KEY];
+        req = store[STORAGE_KEY].find(p => p.id === lastId) || store[STORAGE_KEY][0];
+      }
+      if (!req) {
+        req = getFormDataFromUI();
+      }
 
-    chrome.storage.local.get([HISTORY_STORAGE_KEY], (store) => {
-      const list = store[HISTORY_STORAGE_KEY] || [];
-      list.unshift(historyRecord);
-      const trimmed = list.slice(0, 500);
+      const platenum = req?.platenum || '';
+      const letters = [req?.letter1, req?.letter2, req?.letter3].filter(Boolean).join(' ');
+      const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
+      const passportNo = req?.passportNo || req?.nationalId || '';
+
+      const now = Date.now();
+      const historyList = store[HISTORY_STORAGE_KEY] || [];
+
+      // 防重机制 (15秒内相同车牌与结果不重复入库)
+      const isRecentDup = historyList.slice(0, 3).some(r => {
+        const rPlate = r.request?.fullPlate || '';
+        const rFine = r.result?.totalFine || '';
+        const rCount = r.result?.violationCount || '';
+        return (rPlate === fullPlate || !fullPlate) && rFine === resultObj?.totalFine && rCount === resultObj?.violationCount && (now - r.timestamp < 15000);
+      });
+
+      if (isRecentDup) {
+        return;
+      }
+
+      const countryObj = COUNTRY_OPTIONS.find(c => c.value === req?.country);
+      const countryName = countryObj ? countryObj.text : (req?.country === '10206' ? 'الصين (中国 / China)' : (req?.country || '中国'));
+
+      const historyRecord = {
+        id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
+        timestamp: now,
+        dateTime: new Date().toLocaleString('zh-CN', { hour12: false }),
+        status: status, // 'has_fine' | 'clean' | 'error'
+        request: {
+          letter1: req?.letter1 || '',
+          letter2: req?.letter2 || '',
+          letter3: req?.letter3 || '',
+          plateLetters: letters,
+          platenum: platenum,
+          fullPlate: fullPlate,
+          ownerType: req?.ownerType || 'passport',
+          foreignType: req?.foreignType || 'foreign',
+          country: req?.country || '10206',
+          countryName: countryName,
+          passportNo: req?.passportNo || '',
+          nationalId: req?.nationalId || '',
+          numeralMode: req?.numeralMode || numeralMode,
+          profileName: req?.remark || (currentProfileId ? '已存配置' : '手动输入'),
+          rawRequestJson: JSON.stringify(req || {}, null, 2)
+        },
+        result: {
+          totalFine: resultObj?.totalFine || '0 جنيه',
+          violationCount: resultObj?.violationCount || '0',
+          reconcileFine: resultObj?.reconcileFine || '0 جنيه',
+          time: resultObj?.time || new Date().toLocaleTimeString(),
+          rawResponseText: rawSnapshot || ''
+        }
+      };
+
+      historyList.unshift(historyRecord);
+      const trimmed = historyList.slice(0, 500);
       chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: trimmed }, () => {
         renderInpageHistoryList();
       });

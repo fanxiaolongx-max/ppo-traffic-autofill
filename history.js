@@ -183,8 +183,66 @@ function bindEvents() {
 
 function loadHistoryFromStorage() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get([HISTORY_STORAGE_KEY], (res) => {
+    chrome.storage.local.get([
+      HISTORY_STORAGE_KEY,
+      'ppo_traffic_last_result',
+      'ppo_traffic_live_draft',
+      'ppo_active_query_req',
+      'pendingPpoTask',
+      'ppo_traffic_profiles_v2',
+      'ppo_traffic_last_active_id'
+    ], (res) => {
       allRecords = res[HISTORY_STORAGE_KEY] || [];
+
+      // 智能自愈回填机制：若历史记录为空，但本地已成功抓取到违章结果，自动回填恢复！
+      if (allRecords.length === 0 && res.ppo_traffic_last_result && res.ppo_traffic_last_result.totalFine) {
+        const last = res.ppo_traffic_last_result;
+        const req = res.ppo_active_query_req || 
+                    res.pendingPpoTask?.data || 
+                    res.ppo_traffic_live_draft || 
+                    (res.ppo_traffic_profiles_v2 && res.ppo_traffic_profiles_v2[0]) || 
+                    {};
+        
+        const letters = [req.letter1, req.letter2, req.letter3].filter(Boolean).join(' ');
+        const platenum = req.platenum || '';
+        const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
+        const now = Date.now();
+
+        const recoveredRecord = {
+          id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
+          timestamp: now,
+          dateTime: new Date().toLocaleString('zh-CN', { hour12: false }),
+          status: (parseFloat((last.totalFine || '').replace(/[^\d.]/g, '')) > 0 || parseInt(last.violationCount, 10) > 0) ? 'has_fine' : 'clean',
+          request: {
+            letter1: req.letter1 || '',
+            letter2: req.letter2 || '',
+            letter3: req.letter3 || '',
+            plateLetters: letters,
+            platenum: platenum,
+            fullPlate: fullPlate,
+            ownerType: req.ownerType || 'passport',
+            foreignType: req.foreignType || 'foreign',
+            country: req.country || '10206',
+            countryName: req.country === '10206' ? 'الصين (中国 / China)' : (req.country || '中国'),
+            passportNo: req.passportNo || '',
+            nationalId: req.nationalId || '',
+            numeralMode: req.numeralMode || 'latin',
+            profileName: req.remark || '最新查询记录',
+            rawRequestJson: JSON.stringify(req, null, 2)
+          },
+          result: {
+            totalFine: last.totalFine || '0 جنيه',
+            violationCount: last.violationCount || '0',
+            reconcileFine: last.reconcileFine || '0 جنيه',
+            time: last.time || '刚刚',
+            rawResponseText: `[自动恢复抓取快照]\n总罚款: ${last.totalFine}\n违章笔数: ${last.violationCount}\n和解金额: ${last.reconcileFine}`
+          }
+        };
+
+        allRecords = [recoveredRecord];
+        chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: allRecords });
+      }
+
       updateDashboardStats();
       applyFiltersAndRender();
     });

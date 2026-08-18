@@ -87,23 +87,37 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         const scraped = results[0].result;
         chrome.storage.local.set({ ppo_traffic_last_result: scraped });
 
-        // 辅助记录到历史列表 (防重保护)
-        chrome.storage.local.get(['ppo_active_query_req', 'pendingPpoTask', 'ppo_traffic_history_v1'], (store) => {
-          const req = store.ppo_active_query_req || store.pendingPpoTask?.data;
-          if (!req) return;
+        // 辅助记录到历史列表 (全链兜底 + 防重保护)
+        chrome.storage.local.get([
+          'ppo_traffic_history_v1',
+          'ppo_active_query_req',
+          'pendingPpoTask',
+          'ppo_traffic_live_draft',
+          'ppo_traffic_profiles_v2',
+          'ppo_traffic_last_active_id'
+        ], (store) => {
+          let req = store.ppo_active_query_req || store.pendingPpoTask?.data;
+          if (!req && store.ppo_traffic_live_draft && (store.ppo_traffic_live_draft.platenum || store.ppo_traffic_live_draft.letter1)) {
+            req = store.ppo_traffic_live_draft;
+          }
+          if (!req && store.ppo_traffic_profiles_v2 && store.ppo_traffic_profiles_v2.length > 0) {
+            const lastId = store.ppo_traffic_last_active_id;
+            req = store.ppo_traffic_profiles_v2.find(p => p.id === lastId) || store.ppo_traffic_profiles_v2[0];
+          }
+          req = req || {};
 
           const platenum = req.platenum || '';
           const letters = [req.letter1, req.letter2, req.letter3].filter(Boolean).join(' ');
-          const fullPlate = `${letters} ${platenum}`.trim();
+          const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
           const passportNo = req.passportNo || req.nationalId || '';
 
           const historyList = store.ppo_traffic_history_v1 || [];
           const now = Date.now();
           const isRecentDup = historyList.slice(0, 3).some(r => {
             const rFull = r.request?.fullPlate || '';
-            const rPass = r.request?.passportNo || r.request?.nationalId || '';
             const rFine = r.result?.totalFine || '';
-            return rFull === fullPlate && rPass === passportNo && rFine === scraped.totalFine && (now - r.timestamp < 30000);
+            const rCount = r.result?.violationCount || '';
+            return (rFull === fullPlate || !fullPlate) && rFine === scraped.totalFine && rCount === scraped.violationCount && (now - r.timestamp < 15000);
           });
 
           if (!isRecentDup) {
@@ -111,7 +125,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
               id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
               timestamp: now,
               dateTime: new Date().toLocaleString('zh-CN', { hour12: false }),
-              status: 'has_fine',
+              status: (parseFloat((scraped.totalFine || '').replace(/[^\d.]/g, '')) > 0 || parseInt(scraped.violationCount, 10) > 0) ? 'has_fine' : 'clean',
               request: {
                 letter1: req.letter1 || '',
                 letter2: req.letter2 || '',
@@ -126,6 +140,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
                 passportNo: req.passportNo || '',
                 nationalId: req.nationalId || '',
                 numeralMode: req.numeralMode || 'latin',
+                profileName: req.remark || '网页即时查询',
                 rawRequestJson: JSON.stringify(req, null, 2)
               },
               result: {
@@ -133,7 +148,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
                 violationCount: scraped.violationCount || '0',
                 reconcileFine: scraped.reconcileFine || '0 جنيه',
                 time: scraped.time || new Date().toLocaleTimeString(),
-                rawResponseText: `[后台抓取]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}`
+                rawResponseText: `[后台智能抓取]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}`
               }
             };
             historyList.unshift(newRecord);

@@ -88,6 +88,11 @@ function cleanPassportNumber(str) {
 }
 
 function bindEvents() {
+  // 顶部历史记录大窗口按钮
+  document.getElementById('ppo-btn-open-history')?.addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
+  });
+
   // 顶部打开网页按钮
   document.getElementById('ppo-btn-open-portal')?.addEventListener('click', () => {
     chrome.tabs.create({ url: TARGET_PPO_URL });
@@ -96,9 +101,11 @@ function bindEvents() {
   // 多配置切换与保存
   const profileDropdown = document.getElementById('ppo-profile-dropdown');
   profileDropdown?.addEventListener('change', () => {
-    if (profileDropdown.value) {
-      applyProfile(profileDropdown.value);
-    }
+    applyProfile(profileDropdown.value);
+  });
+
+  document.getElementById('ppo-btn-update-profile')?.addEventListener('click', () => {
+    updateCurrentProfile();
   });
 
   const saveExpander = document.getElementById('ppo-save-expander');
@@ -137,6 +144,7 @@ function bindEvents() {
       btn.classList.add('active');
       numeralMode = btn.getAttribute('data-mode');
       updatePreview();
+      saveLiveDraft();
     });
   });
 
@@ -157,6 +165,7 @@ function bindEvents() {
 
     el.addEventListener('input', () => {
       updatePreview();
+      saveLiveDraft();
       if (el.value.trim().length >= 1 && item.nextId) {
         const nextEl = document.getElementById(item.nextId);
         if (nextEl) {
@@ -179,6 +188,7 @@ function bindEvents() {
       if (targetInput) {
         targetInput.value = char;
         updatePreview();
+        saveLiveDraft();
         
         if (activeLetterTarget === 'letter1') {
           const next = document.getElementById('ppo-in-letter2');
@@ -203,11 +213,15 @@ function bindEvents() {
   });
 
   // 车牌与护照输入监听
-  document.getElementById('ppo-in-platenum')?.addEventListener('input', updatePreview);
+  document.getElementById('ppo-in-platenum')?.addEventListener('input', () => {
+    updatePreview();
+    saveLiveDraft();
+  });
   
   const passportInput = document.getElementById('ppo-in-passport-no');
   passportInput?.addEventListener('input', () => {
     updatePreview();
+    saveLiveDraft();
     const raw = passportInput.value.trim();
     const cleaned = cleanPassportNumber(raw);
     const hintEl = document.getElementById('ppo-passport-hint');
@@ -220,12 +234,28 @@ function bindEvents() {
     }
   });
 
+  document.getElementById('ppo-in-national-id')?.addEventListener('input', () => {
+    updatePreview();
+    saveLiveDraft();
+  });
+
+  document.getElementById('ppo-in-country')?.addEventListener('change', () => {
+    saveLiveDraft();
+  });
+
   // 证件类型切换
   document.querySelectorAll('input[name="ppo_owner_type"]').forEach(radio => {
     radio.addEventListener('change', () => {
       const isPassport = radio.value === 'passport';
       document.getElementById('ppo-passport-fields').style.display = isPassport ? 'block' : 'none';
       document.getElementById('ppo-national-id-fields').style.display = isPassport ? 'none' : 'block';
+      saveLiveDraft();
+    });
+  });
+
+  document.querySelectorAll('input[name="ppo_foreign_type"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      saveLiveDraft();
     });
   });
 
@@ -243,6 +273,29 @@ function bindEvents() {
   document.getElementById('ppo-btn-clear')?.addEventListener('click', () => {
     clearForm();
     showToast('已清空输入框');
+  });
+
+  // 强制自愈解卡按钮
+  document.getElementById('ppo-btn-heal-portal')?.addEventListener('click', () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const currentTab = tabs[0];
+      if (currentTab && currentTab.url && currentTab.url.includes('ppo.gov.eg')) {
+        chrome.tabs.sendMessage(currentTab.id, { action: 'force_unfreeze_heal' }, (resp) => {
+          showToast('✅ 已发送强制自愈解卡指令');
+        });
+      } else {
+        chrome.tabs.query({}, (allTabs) => {
+          const ppoTab = allTabs.find(t => t.url && t.url.includes('ppo.gov.eg'));
+          if (ppoTab) {
+            chrome.tabs.sendMessage(ppoTab.id, { action: 'force_unfreeze_heal' }, () => {
+              showToast('✅ 已对后台 PPO 页面执行自愈解卡');
+            });
+          } else {
+            showToast('ℹ️ 未检测到运行中的 PPO 官网页面');
+          }
+        });
+      }
+    });
   });
 }
 
@@ -375,32 +428,44 @@ function updatePreview() {
 }
 
 const LAST_RESULT_KEY = 'ppo_traffic_last_result';
+const DRAFT_KEY = 'ppo_traffic_live_draft';
 
-// 统一跨组件 Profile 存储管理 (纯原生 chrome.storage.local，浏览器全局统一)
-function loadProfilesFromStorage() {
-  chrome.storage.local.get([STORAGE_KEY, LAST_ACTIVE_KEY, LAST_RESULT_KEY], (res) => {
-    const list = res[STORAGE_KEY] || [];
-    renderProfileDropdown(list);
+// 永久双重持久化写入 (写入 chrome.storage.local 并自动云端/全局备份至 chrome.storage.sync)
+function saveProfilesListPermanently(list, activeId, callback) {
+  const payload = {
+    [STORAGE_KEY]: list,
+    [LAST_ACTIVE_KEY]: activeId
+  };
 
-    const lastId = res[LAST_ACTIVE_KEY];
-    const target = list.find(p => p.id === lastId) || (list.length > 0 ? list[0] : null);
-    if (target) {
-      applyProfileObj(target);
-    } else {
-      const countrySelect = document.getElementById('ppo-in-country');
-      if (countrySelect) countrySelect.value = '10206';
+  chrome.storage.local.set(payload, () => {
+    if (typeof chrome.storage.sync !== 'undefined') {
+      try {
+        chrome.storage.sync.set(payload, () => {});
+      } catch (e) {}
     }
+    if (typeof callback === 'function') callback();
+  });
+}
 
-    if (res[LAST_RESULT_KEY]) {
-      const r = res[LAST_RESULT_KEY];
-      const banner = document.getElementById('ppo-result-banner');
-      if (banner) {
-        document.getElementById('ppo-res-total').textContent = r.totalFine || '0 جنيه';
-        document.getElementById('ppo-res-count').textContent = `${r.violationCount || 0} 笔`;
-        document.getElementById('ppo-res-reconcile').textContent = r.reconcileFine || '0 جنيه';
-        document.getElementById('ppo-result-time').textContent = r.time ? `更新于 ${r.time}` : '最近';
-        banner.classList.add('show');
-      }
+// 统一跨组件 Profile 存储管理 (双重灾备，永不丢失)
+function loadProfilesFromStorage() {
+  chrome.storage.local.get([STORAGE_KEY, LAST_ACTIVE_KEY, LAST_RESULT_KEY, DRAFT_KEY], (res) => {
+    let list = res[STORAGE_KEY] || [];
+    let lastId = res[LAST_ACTIVE_KEY];
+
+    // 如果 local 异常丢失，自动从 sync 备份恢复
+    if (list.length === 0 && typeof chrome.storage.sync !== 'undefined') {
+      chrome.storage.sync.get([STORAGE_KEY, LAST_ACTIVE_KEY], (syncRes) => {
+        if (syncRes && syncRes[STORAGE_KEY] && syncRes[STORAGE_KEY].length > 0) {
+          list = syncRes[STORAGE_KEY];
+          lastId = syncRes[LAST_ACTIVE_KEY] || lastId;
+          // 自动修补回 local
+          chrome.storage.local.set({ [STORAGE_KEY]: list, [LAST_ACTIVE_KEY]: lastId });
+        }
+        processLoadedProfiles(list, lastId, res);
+      });
+    } else {
+      processLoadedProfiles(list, lastId, res);
     }
   });
 
@@ -429,6 +494,35 @@ function loadProfilesFromStorage() {
   }
 }
 
+function processLoadedProfiles(list, lastId, res) {
+  renderProfileDropdown(list);
+
+  const target = list.find(p => p.id === lastId) || (list.length > 0 ? list[0] : null);
+  if (target) {
+    applyProfileObj(target);
+  } else {
+    // 若无配置，检查是否有正在编辑的实时草稿
+    if (res && res[DRAFT_KEY]) {
+      applyDraftObj(res[DRAFT_KEY]);
+    } else {
+      const countrySelect = document.getElementById('ppo-in-country');
+      if (countrySelect) countrySelect.value = '10206';
+    }
+  }
+
+  if (res && res[LAST_RESULT_KEY]) {
+    const r = res[LAST_RESULT_KEY];
+    const banner = document.getElementById('ppo-result-banner');
+    if (banner) {
+      document.getElementById('ppo-res-total').textContent = r.totalFine || '0 جنيه';
+      document.getElementById('ppo-res-count').textContent = `${r.violationCount || 0} 笔`;
+      document.getElementById('ppo-res-reconcile').textContent = r.reconcileFine || '0 جنيه';
+      document.getElementById('ppo-result-time').textContent = r.time ? `更新于 ${r.time}` : '最近';
+      banner.classList.add('show');
+    }
+  }
+}
+
 function renderProfileDropdown(list) {
   const dropdown = document.getElementById('ppo-profile-dropdown');
   if (!dropdown) return;
@@ -446,6 +540,11 @@ function renderProfileDropdown(list) {
     }
     dropdown.appendChild(opt);
   });
+
+  const updateBtn = document.getElementById('ppo-btn-update-profile');
+  if (updateBtn) {
+    updateBtn.style.display = currentProfileId ? 'inline-flex' : 'none';
+  }
 }
 
 function saveNewProfile(remarkName) {
@@ -470,18 +569,55 @@ function saveNewProfile(remarkName) {
 
     list.push(newProfile);
 
-    chrome.storage.local.set({
-      [STORAGE_KEY]: list,
-      [LAST_ACTIVE_KEY]: id
-    }, () => {
+    saveProfilesListPermanently(list, id, () => {
       currentProfileId = id;
       renderProfileDropdown(list);
-      showToast(`✅ 已存入浏览器本地统一存储: ${newProfile.remark}`);
+      const updateBtn = document.getElementById('ppo-btn-update-profile');
+      if (updateBtn) updateBtn.style.display = 'inline-flex';
+      showToast(`✅ 已永久保存在本地与云端: ${newProfile.remark}`);
+    });
+  });
+}
+
+function updateCurrentProfile() {
+  if (!currentProfileId) {
+    showToast('⚠️ 未选中任何配置，请点击「➕ 新增」', true);
+    return;
+  }
+
+  chrome.storage.local.get([STORAGE_KEY], (res) => {
+    let list = res[STORAGE_KEY] || [];
+    const index = list.findIndex(p => p.id === currentProfileId);
+    if (index === -1) {
+      showToast('⚠️ 未找到当前配置', true);
+      return;
+    }
+
+    const formData = getFormData();
+    const oldRemark = list[index].remark;
+
+    list[index] = {
+      ...formData,
+      id: currentProfileId,
+      remark: oldRemark || formData.passportNo || formData.platenum || '未命名配置'
+    };
+
+    saveProfilesListPermanently(list, currentProfileId, () => {
+      renderProfileDropdown(list);
+      showToast(`✅ 已永久覆盖更新「${list[index].remark}」`);
     });
   });
 }
 
 function applyProfile(id) {
+  if (!id) {
+    currentProfileId = null;
+    chrome.storage.local.set({ [LAST_ACTIVE_KEY]: null });
+    const updateBtn = document.getElementById('ppo-btn-update-profile');
+    if (updateBtn) updateBtn.style.display = 'none';
+    return;
+  }
+
   chrome.storage.local.get([STORAGE_KEY], (res) => {
     const list = res[STORAGE_KEY] || [];
     const profile = list.find(p => p.id === id);
@@ -530,8 +666,35 @@ function applyProfileObj(profile) {
   const profileDropdown = document.getElementById('ppo-profile-dropdown');
   if (profileDropdown) profileDropdown.value = profile.id;
 
+  const updateBtn = document.getElementById('ppo-btn-update-profile');
+  if (updateBtn) updateBtn.style.display = 'inline-flex';
+
   updatePreview();
-  showToast(`👤 已载入: ${profile.remark}`);
+  showToast(`👤 已载入配置: ${profile.remark}`);
+}
+
+function applyDraftObj(draft) {
+  if (!draft) return;
+  if (draft.letter1) document.getElementById('ppo-in-letter1').value = draft.letter1;
+  if (draft.letter2) document.getElementById('ppo-in-letter2').value = draft.letter2;
+  if (draft.letter3) document.getElementById('ppo-in-letter3').value = draft.letter3;
+  if (draft.platenum) document.getElementById('ppo-in-platenum').value = draft.platenum;
+  if (draft.passportNo) document.getElementById('ppo-in-passport-no').value = draft.passportNo;
+  if (draft.nationalId) document.getElementById('ppo-in-national-id').value = draft.nationalId;
+  if (draft.country) {
+    const cs = document.getElementById('ppo-in-country');
+    if (cs) cs.value = draft.country;
+  }
+  updatePreview();
+}
+
+let draftDebounceTimer = null;
+function saveLiveDraft() {
+  if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
+  draftDebounceTimer = setTimeout(() => {
+    const data = getFormData();
+    chrome.storage.local.set({ [DRAFT_KEY]: data });
+  }, 300);
 }
 
 function deleteCurrentProfile() {
@@ -547,10 +710,7 @@ function deleteCurrentProfile() {
 
     list = list.filter(p => p.id !== currentProfileId);
 
-    chrome.storage.local.set({
-      [STORAGE_KEY]: list,
-      [LAST_ACTIVE_KEY]: null
-    }, () => {
+    saveProfilesListPermanently(list, null, () => {
       currentProfileId = null;
       renderProfileDropdown(list);
       clearForm();

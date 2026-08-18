@@ -11,6 +11,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleOpenAndFill(message.data, message.autoSubmit !== false, sendResponse);
     return true;
   }
+  if (message.action === 'open_history_tab') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
+    if (sendResponse) sendResponse({ success: true });
+    return true;
+  }
 });
 
 // 2. 监听标签页 URL 变化：一旦检测到进入 traffic-fines-summary 结果页，立即执行 window.stop() 截停转圈并强行提取
@@ -81,6 +86,60 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       if (results && results[0] && results[0].result) {
         const scraped = results[0].result;
         chrome.storage.local.set({ ppo_traffic_last_result: scraped });
+
+        // 辅助记录到历史列表 (防重保护)
+        chrome.storage.local.get(['ppo_active_query_req', 'pendingPpoTask', 'ppo_traffic_history_v1'], (store) => {
+          const req = store.ppo_active_query_req || store.pendingPpoTask?.data;
+          if (!req) return;
+
+          const platenum = req.platenum || '';
+          const letters = [req.letter1, req.letter2, req.letter3].filter(Boolean).join(' ');
+          const fullPlate = `${letters} ${platenum}`.trim();
+          const passportNo = req.passportNo || req.nationalId || '';
+
+          const historyList = store.ppo_traffic_history_v1 || [];
+          const now = Date.now();
+          const isRecentDup = historyList.slice(0, 3).some(r => {
+            const rFull = r.request?.fullPlate || '';
+            const rPass = r.request?.passportNo || r.request?.nationalId || '';
+            const rFine = r.result?.totalFine || '';
+            return rFull === fullPlate && rPass === passportNo && rFine === scraped.totalFine && (now - r.timestamp < 30000);
+          });
+
+          if (!isRecentDup) {
+            const newRecord = {
+              id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
+              timestamp: now,
+              dateTime: new Date().toLocaleString('zh-CN', { hour12: false }),
+              status: 'has_fine',
+              request: {
+                letter1: req.letter1 || '',
+                letter2: req.letter2 || '',
+                letter3: req.letter3 || '',
+                plateLetters: letters,
+                platenum: platenum,
+                fullPlate: fullPlate,
+                ownerType: req.ownerType || 'passport',
+                foreignType: req.foreignType || 'foreign',
+                country: req.country || '10206',
+                countryName: req.country === '10206' ? 'الصين (中国 / China)' : (req.country || '中国'),
+                passportNo: req.passportNo || '',
+                nationalId: req.nationalId || '',
+                numeralMode: req.numeralMode || 'latin',
+                rawRequestJson: JSON.stringify(req, null, 2)
+              },
+              result: {
+                totalFine: scraped.totalFine || '0 جنيه',
+                violationCount: scraped.violationCount || '0',
+                reconcileFine: scraped.reconcileFine || '0 جنيه',
+                time: scraped.time || new Date().toLocaleTimeString(),
+                rawResponseText: `[后台抓取]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}`
+              }
+            };
+            historyList.unshift(newRecord);
+            chrome.storage.local.set({ ppo_traffic_history_v1: historyList.slice(0, 500) });
+          }
+        });
       }
     }).catch(() => {});
   }

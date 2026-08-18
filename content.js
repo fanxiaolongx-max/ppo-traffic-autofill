@@ -48,6 +48,7 @@
   const STORAGE_KEY = 'ppo_traffic_profiles_v2';
   const LAST_ACTIVE_KEY = 'ppo_traffic_last_active_id';
   const LAST_RESULT_KEY = 'ppo_traffic_last_result';
+  const HISTORY_STORAGE_KEY = 'ppo_traffic_history_v1';
 
   function cleanPassportNumber(str) {
     if (!str) return '';
@@ -73,8 +74,41 @@
             </div>
           </div>
           <div class="ppo-header-actions">
+            <button class="ppo-tool-btn ppo-tool-btn-heal" id="ppo-btn-heal" title="主动自愈解卡与清除卡顿遮罩">🛠️ 自愈</button>
+            <button class="ppo-tool-btn ppo-tool-btn-history" id="ppo-btn-history" title="查看历史记录">📜 历史</button>
             <button class="ppo-tool-btn" id="ppo-btn-minimize" title="最小化">一</button>
             <button class="ppo-tool-btn" id="ppo-btn-close" title="收起">✕</button>
+          </div>
+        </div>
+
+        <!-- 智能自愈与异常诊断横幅 (超时或报错时自动唤起) -->
+        <div class="ppo-diagnostic-banner" id="ppo-diagnostic-banner">
+          <div class="ppo-diag-header">
+            <span class="ppo-diag-icon" id="ppo-diag-icon">⚠️</span>
+            <div class="ppo-diag-title-wrap">
+              <div class="ppo-diag-title" id="ppo-diag-title">官方系统响应较慢</div>
+              <div class="ppo-diag-desc" id="ppo-diag-desc">已自动优化连接通道...</div>
+            </div>
+            <button type="button" class="ppo-diag-close" id="ppo-btn-close-diag" title="关闭提示">✕</button>
+          </div>
+          <div class="ppo-diag-actions">
+            <button type="button" class="ppo-diag-btn primary" id="ppo-diag-btn-reload">🔄 刷新页面并重试</button>
+            <button type="button" class="ppo-diag-btn" id="ppo-diag-btn-unfreeze">🛠️ 强制解卡</button>
+            <button type="button" class="ppo-diag-btn" id="ppo-diag-btn-home">🌐 返回官网主页</button>
+          </div>
+        </div>
+
+        <!-- 内置历史记录滑出抽屉 -->
+        <div class="ppo-inpage-history-drawer" id="ppo-history-drawer">
+          <div class="ppo-drawer-header">
+            <span class="ppo-drawer-title">📜 历史查询记录 (<span id="ppo-drawer-count">0</span>)</span>
+            <div class="ppo-drawer-actions">
+              <button type="button" class="ppo-drawer-action-btn" id="ppo-btn-open-full-tab" title="在新标签页中打开完整大窗口">大窗口 ↗</button>
+              <button type="button" class="ppo-drawer-action-btn" id="ppo-btn-close-drawer">✕</button>
+            </div>
+          </div>
+          <div class="ppo-drawer-body" id="ppo-drawer-list">
+            <!-- 动态渲染最近条目 -->
           </div>
         </div>
 
@@ -114,8 +148,11 @@
               <select class="ppo-profile-select" id="ppo-profile-dropdown">
                 <option value="">-- 选择已存人员配置 (点击切换) --</option>
               </select>
+              <button type="button" class="ppo-profile-btn" id="ppo-btn-update-profile" title="将当前修改覆盖更新到选中的配置" style="display: none; background: rgba(212, 175, 55, 0.2); border-color: var(--ppo-gold); color: #fef08a;">
+                <span>💾 覆盖更新</span>
+              </button>
               <button type="button" class="ppo-profile-btn" id="ppo-btn-toggle-save" title="将当前填写的表单存为新人员配置">
-                <span>➕ 存为配置</span>
+                <span>➕ 新增</span>
               </button>
               <button type="button" class="ppo-profile-btn danger" id="ppo-btn-delete-profile" title="删除当前选中的人员配置">
                 <span>🗑️</span>
@@ -372,9 +409,11 @@
     // 多配置切换与保存
     const profileDropdown = document.getElementById('ppo-profile-dropdown');
     profileDropdown.addEventListener('change', () => {
-      if (profileDropdown.value) {
-        applyProfileById(profileDropdown.value);
-      }
+      applyProfileById(profileDropdown.value);
+    });
+
+    document.getElementById('ppo-btn-update-profile')?.addEventListener('click', () => {
+      updateCurrentProfile();
     });
 
     const saveExpander = document.getElementById('ppo-save-expander');
@@ -413,6 +452,7 @@
         btn.classList.add('active');
         numeralMode = btn.getAttribute('data-mode');
         updatePreview();
+        saveLiveDraft();
       });
     });
 
@@ -433,6 +473,7 @@
 
       el.addEventListener('input', () => {
         updatePreview();
+        saveLiveDraft();
         if (el.value.trim().length >= 1 && item.nextId) {
           const nextEl = document.getElementById(item.nextId);
           if (nextEl) {
@@ -455,6 +496,7 @@
         if (targetInput) {
           targetInput.value = char;
           updatePreview();
+          saveLiveDraft();
           
           if (activeLetterTarget === 'letter1') {
             const next = document.getElementById('ppo-in-letter2');
@@ -478,11 +520,15 @@
       });
     });
 
-    document.getElementById('ppo-in-platenum').addEventListener('input', updatePreview);
+    document.getElementById('ppo-in-platenum').addEventListener('input', () => {
+      updatePreview();
+      saveLiveDraft();
+    });
     
     const passportInput = document.getElementById('ppo-in-passport-no');
     passportInput.addEventListener('input', () => {
       updatePreview();
+      saveLiveDraft();
       const raw = passportInput.value.trim();
       const cleaned = cleanPassportNumber(raw);
       const hintEl = document.getElementById('ppo-passport-hint');
@@ -495,11 +541,27 @@
       }
     });
 
+    document.getElementById('ppo-in-national-id')?.addEventListener('input', () => {
+      updatePreview();
+      saveLiveDraft();
+    });
+
+    document.getElementById('ppo-in-country')?.addEventListener('change', () => {
+      saveLiveDraft();
+    });
+
     document.querySelectorAll('input[name="ppo_owner_type"]').forEach(radio => {
       radio.addEventListener('change', () => {
         const isPassport = radio.value === 'passport';
         document.getElementById('ppo-passport-fields').style.display = isPassport ? 'block' : 'none';
         document.getElementById('ppo-national-id-fields').style.display = isPassport ? 'none' : 'block';
+        saveLiveDraft();
+      });
+    });
+
+    document.querySelectorAll('input[name="ppo_foreign_type"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        saveLiveDraft();
       });
     });
 
@@ -514,6 +576,62 @@
     document.getElementById('ppo-btn-clear').addEventListener('click', () => {
       clearForm();
       showToast('已清空输入框');
+    });
+
+    // 智能自愈与强制解卡按钮
+    document.getElementById('ppo-btn-heal')?.addEventListener('click', () => {
+      forceUnfreezeAndHeal();
+    });
+
+    // 异常诊断条交互事件
+    document.getElementById('ppo-btn-close-diag')?.addEventListener('click', () => {
+      hideDiagnosticBanner();
+    });
+
+    document.getElementById('ppo-diag-btn-reload')?.addEventListener('click', () => {
+      const data = getFormDataFromUI();
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({
+          pendingPpoTask: {
+            data: data,
+            autoSubmit: true,
+            timestamp: Date.now()
+          }
+        }, () => {
+          window.location.reload();
+        });
+      } else {
+        window.location.reload();
+      }
+    });
+
+    document.getElementById('ppo-diag-btn-unfreeze')?.addEventListener('click', () => {
+      forceUnfreezeAndHeal();
+    });
+
+    document.getElementById('ppo-diag-btn-home')?.addEventListener('click', () => {
+      window.location.href = TARGET_PPO_URL;
+    });
+
+    // 历史记录抽屉事件
+    document.getElementById('ppo-btn-history')?.addEventListener('click', () => {
+      const drawer = document.getElementById('ppo-history-drawer');
+      if (drawer) {
+        drawer.classList.toggle('show');
+        if (drawer.classList.contains('show')) {
+          renderInpageHistoryList();
+        }
+      }
+    });
+
+    document.getElementById('ppo-btn-close-drawer')?.addEventListener('click', () => {
+      document.getElementById('ppo-history-drawer')?.classList.remove('show');
+    });
+
+    document.getElementById('ppo-btn-open-full-tab')?.addEventListener('click', () => {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: 'open_history_tab' });
+      }
     });
   }
 
@@ -637,6 +755,14 @@
   function fillPPOForm(formData, autoSubmit = false) {
     const data = formData || getFormDataFromUI();
 
+    activeQueryData = { ...data };
+    try {
+      sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ ppo_active_query_req: activeQueryData });
+      }
+    } catch (e) {}
+
     const validation = isFormDataValid(data);
     if (!validation.valid) {
       showToast(`⚠️ ${validation.reason}！`, true);
@@ -749,8 +875,7 @@
                           document.querySelector("button[id*='GET_FIN']");
         if (submitBtn) {
           showToast('🚀 正在提交查询...');
-          isAwaitingQueryResult = true;
-          querySubmissionTimestamp = Date.now();
+          startQueryWatchdog();
           submitBtn.click();
         } else {
           showToast('⚠️ 请手动点击「إجمالى المخالفات」查询', true);
@@ -810,6 +935,179 @@
   let lastReportedTaskId = null;
   let isAwaitingQueryResult = false;
   let querySubmissionTimestamp = 0;
+  let queryWatchdogInterval = null;
+  let queryWatchdogSeconds = 0;
+
+  // 智能主动自愈与死锁遮罩清理
+  function removeBlockingOverlays(forceReset = false) {
+    const overlays = document.querySelectorAll(
+      '#apex_wait_overlay, .apex_wait_popup, .u-Processing, .ui-widget-overlay, ' +
+      'div[class*="wait_overlay"], div[id*="wait"], div[class*="spinner"], div[class*="loading"]'
+    );
+    overlays.forEach(el => {
+      try {
+        el.style.display = 'none';
+        el.remove();
+      } catch (e) {}
+    });
+
+    if (forceReset) {
+      document.querySelectorAll('button:disabled, input:disabled').forEach(el => {
+        if (!el.closest('#ppo-autofill-container')) {
+          el.disabled = false;
+          el.removeAttribute('disabled');
+        }
+      });
+    }
+  }
+
+  function startQueryWatchdog() {
+    stopQueryWatchdog();
+    queryWatchdogSeconds = 0;
+    isAwaitingQueryResult = true;
+    querySubmissionTimestamp = Date.now();
+
+    hideDiagnosticBanner();
+
+    queryWatchdogInterval = setInterval(() => {
+      if (!isAwaitingQueryResult) {
+        stopQueryWatchdog();
+        return;
+      }
+
+      queryWatchdogSeconds++;
+
+      // Stage 1: T=4s
+      if (queryWatchdogSeconds === 4) {
+        showToast('📡 正在等待官方违章数据库返回...', false);
+      }
+
+      // Stage 2: T=8s - 自动第1级解卡（截断挂起静态资源 & 隐式扫描）
+      if (queryWatchdogSeconds === 8) {
+        showToast('⚡ 官方响应较慢，已启动第 1 级加速通道 (自动清理挂起资源)...', false);
+        try { window.stop(); } catch (e) {}
+        removeBlockingOverlays(false);
+        checkAndScrapeResults();
+      }
+
+      // Stage 3: T=15s - 自动第2级解卡（穿透死锁遮罩 & 强行重扫）
+      if (queryWatchdogSeconds === 15) {
+        showToast('🛡️ 正在执行第 2 级主动解卡 (穿透死锁遮罩并重新探测数据)...', false);
+        try { window.stop(); } catch (e) {}
+        removeBlockingOverlays(true);
+        checkAndScrapeResults();
+      }
+
+      // Stage 4: T=25s - 终极自愈引导
+      if (queryWatchdogSeconds >= 25) {
+        stopQueryWatchdog();
+        isAwaitingQueryResult = false;
+        showDiagnosticBanner(
+          '⚠️ 官方服务器响应超时 (>25秒)',
+          '埃及公诉机关交通内网当前负载极高或 APEX 会话已脱机，建议点击下方「刷新页面并重试」重新发起。',
+          true
+        );
+        showToast('⚠️ 官方系统响应超时，已唤起自愈诊断条', true);
+      }
+    }, 1000);
+  }
+
+  function stopQueryWatchdog() {
+    if (queryWatchdogInterval) {
+      clearInterval(queryWatchdogInterval);
+      queryWatchdogInterval = null;
+    }
+  }
+
+  function forceUnfreezeAndHeal() {
+    try { window.stop(); } catch (e) {}
+    removeBlockingOverlays(true);
+    stopQueryWatchdog();
+    isAwaitingQueryResult = false;
+    checkAndScrapeResults();
+    hideDiagnosticBanner();
+    showToast('🎉 已执行强制自愈解卡！所有阻塞遮罩已清理，表单已重新就绪。');
+  }
+
+  function showDiagnosticBanner(title, desc, isError = true) {
+    const banner = document.getElementById('ppo-diagnostic-banner');
+    if (!banner) return;
+
+    const titleEl = document.getElementById('ppo-diag-title');
+    const descEl = document.getElementById('ppo-diag-desc');
+    const iconEl = document.getElementById('ppo-diag-icon');
+
+    if (titleEl) titleEl.textContent = title;
+    if (descEl) descEl.textContent = desc;
+    if (iconEl) iconEl.textContent = isError ? '⚠️' : 'ℹ️';
+
+    banner.classList.add('show');
+  }
+
+  function hideDiagnosticBanner() {
+    document.getElementById('ppo-diagnostic-banner')?.classList.remove('show');
+  }
+
+  // 智能阿拉伯语错误翻译与分类
+  function classifyOfficialError(pageText, dialogText) {
+    const combined = `${pageText} ${dialogText}`.toLowerCase();
+
+    if (combined.includes('حدث خطأ أثناء تنفيذ الخدمة')) {
+      return {
+        title: '⚠️ 官方服务执行出错 (خطأ أثناء تنفيذ الخدمة)',
+        detail: '车牌与填入的证件号不匹配（该车可能属于其他所有人），或官方车辆库当前繁忙。',
+        suggestion: '请仔细核对车牌字母、数字及护照号是否完全属于该登记人。已自动关闭官方报错弹窗。',
+        autoDismiss: true
+      };
+    }
+    if (combined.includes('رقم اللوحة') || combined.includes('حروف اللوحة')) {
+      return {
+        title: '⚠️ 车牌号码格式错误 (رقم اللوحة غير صحيح)',
+        detail: '填写的车牌字母或数字格式不符合埃及交通局规范。',
+        suggestion: '请核对车牌前2~3个字母与数字组合。',
+        autoDismiss: true
+      };
+    }
+    if (combined.includes('رقم جواز السفر') || combined.includes('الرقم القومي')) {
+      return {
+        title: '⚠️ 证件号码不匹配 (بيانات الرقم القومي / الجواز)',
+        detail: '护照号或埃及身份证号格式有误或与该车不符。',
+        suggestion: '请确保护照号输入纯数字部分，或核对埃及14位身份证号。',
+        autoDismiss: true
+      };
+    }
+    if (combined.includes('الخدمة غير متاحة') || combined.includes('صيانة') || combined.includes('غير متوفرة')) {
+      return {
+        title: '🚧 官方系统正在维护 (الخدمة غير متاحة)',
+        detail: '埃及交通违章查询接口当前正在维护或临时脱机。',
+        suggestion: '建议稍候几分钟后再试。',
+        autoDismiss: true
+      };
+    }
+    if (combined.includes('انتهت الجلسة') || combined.includes('session expired') || combined.includes('wwv_flow')) {
+      return {
+        title: '⏱️ 官方系统会话已过期 (انتهت صلاحية الجلسة)',
+        detail: '长时间停留在页面导致 APEX 会话令牌失效。',
+        suggestion: '点击下方「🔄 刷新重试」即可重新建立会话并自动填表。',
+        autoDismiss: false
+      };
+    }
+    if (combined.includes('502 bad gateway') || combined.includes('503 service') || combined.includes('504 gateway')) {
+      return {
+        title: '🌐 官方网关超时脱机 (502/503/504)',
+        detail: '埃及政府网络网关无响应或遭遇网络拥堵。',
+        suggestion: '请检查网络连接或运行 trust_ppo_cert.sh 证书信任脚本。',
+        autoDismiss: false
+      };
+    }
+
+    return {
+      title: '⚠️ 官方系统返回异常提示',
+      detail: dialogText ? dialogText.slice(0, 100) : '页面检测到官方异常提示信息。',
+      suggestion: '请核对输入数据后重试。',
+      autoDismiss: true
+    };
+  }
 
   // 4. 实时监听并捕捉页面上的违章罚款信息与官方报错弹窗
   function startResultObserver() {
@@ -841,32 +1139,56 @@
       } catch (e) {}
     }
 
-    // 1. 检查是否有官方错误弹窗 (如: حدث خطأ أثناء تنفيذ الخدمة)
+    // 1. 检查是否有官方错误弹窗 / 报错区域
     const errorDialog = document.querySelector('.ui-dialog, .t-Alert--error, div[role="dialog"]');
+    const hasError = pageText.includes('حدث خطأ') || pageText.includes('خطأ') || (errorDialog && errorDialog.innerText.includes('خطأ')) || pageText.includes('الخدمة غير متاحة') || pageText.includes('انتهت الجلسة');
 
-    if (pageText.includes('حدث خطأ أثناء تنفيذ الخدمة') || (errorDialog && errorDialog.innerText.includes('خطأ'))) {
+    if (hasError) {
+      stopQueryWatchdog();
       isAwaitingQueryResult = false;
-      const effectiveTaskId = currentTaskId || sessionStorage.getItem('ppo_active_task_id');
-      
-      showToast('⚠️ 官方系统提示：执行出错 (请核对车牌/证件号)', true);
+      const dialogText = errorDialog ? errorDialog.innerText : '';
+      const classified = classifyOfficialError(pageText, dialogText);
 
-      // 自动点击错误弹窗的「موافق (确定)」按钮恢复界面
-      const okBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('موافق'));
-      if (okBtn) {
-        setTimeout(() => okBtn.click(), 800);
+      showDiagnosticBanner(classified.title, `${classified.detail} ${classified.suggestion}`, true);
+      showToast(classified.title, true);
+
+      saveQueryHistoryRecord('error', {
+        totalFine: '0',
+        violationCount: '0',
+        reconcileFine: '0',
+        time: new Date().toLocaleTimeString()
+      }, `[官方报错]\n类型: ${classified.title}\n详情: ${classified.detail}\n原文: ${dialogText || pageText.slice(0, 300)}`);
+
+      if (classified.autoDismiss) {
+        // 自动点击错误弹窗的「موافق (确定)」或「Close/✕」按钮恢复界面
+        const okBtn = Array.from(document.querySelectorAll('button, a, input[type="button"]')).find(b => 
+          b.innerText && (b.innerText.includes('موافق') || b.innerText.includes('Close') || b.innerText.includes('OK') || b.innerText.includes('إغلاق'))
+        );
+        if (okBtn) {
+          setTimeout(() => {
+            try { okBtn.click(); } catch(e){}
+            removeBlockingOverlays(true);
+          }, 800);
+        } else {
+          removeBlockingOverlays(true);
+        }
       }
       return;
     }
 
     // 2. 检查是否有无违章提示 (如: لا توجد مخالفات)
     if (pageText.includes('لا توجد مخالفات') || pageText.includes('لا يوجد مخالفات')) {
+      stopQueryWatchdog();
       isAwaitingQueryResult = false;
-      displayCapturedResult({
+      hideDiagnosticBanner();
+      const cleanRes = {
         totalFine: '0 جنيه',
         violationCount: '0',
         reconcileFine: '0 جنيه',
         time: new Date().toLocaleTimeString()
-      });
+      };
+      saveQueryHistoryRecord('clean', cleanRes, '官方提示：لا توجد مخالفات (无交通违章记录)');
+      displayCapturedResult(cleanRes);
       return;
     }
 
@@ -918,7 +1240,9 @@
 
       if (totalFine || violationCount) {
         // 标记本次查询已完成捕获
+        stopQueryWatchdog();
         isAwaitingQueryResult = false;
+        hideDiagnosticBanner();
         displayCapturedResult({
           totalFine: totalFine || '0 جنيه',
           violationCount: violationCount || '0',
@@ -942,13 +1266,148 @@
   }
 
   function displayCapturedResult(res) {
+    stopQueryWatchdog();
+    hideDiagnosticBanner();
     renderResultBanner(res);
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ [LAST_RESULT_KEY]: res });
     }
 
+    const pageSnapshot = (document.body ? document.body.innerText || '' : '').slice(0, 3000);
+    saveQueryHistoryRecord('has_fine', res, pageSnapshot);
+
     showToast(`🎉 已成功获取罚款信息：总计 ${res.totalFine} (${res.violationCount} 笔违章)`);
+  }
+
+  let activeQueryData = null;
+  let lastRecordedHistoryKey = '';
+
+  function saveQueryHistoryRecord(status, resultObj, rawSnapshot) {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+
+    let req = activeQueryData;
+    if (!req) {
+      try {
+        const cached = sessionStorage.getItem('ppo_active_query_req');
+        if (cached) req = JSON.parse(cached);
+      } catch (e) {}
+    }
+    if (!req) {
+      req = getFormDataFromUI();
+    }
+
+    const platenum = req?.platenum || '';
+    const letters = [req?.letter1, req?.letter2, req?.letter3].filter(Boolean).join(' ');
+    const fullPlate = `${letters} ${platenum}`.trim();
+    const passportNo = req?.passportNo || req?.nationalId || '';
+
+    // 防重机制 (15秒内相同车牌与结果不重复入库)
+    const dedupKey = `${fullPlate}_${passportNo}_${resultObj?.totalFine || ''}_${resultObj?.violationCount || ''}_${status}`;
+    const now = Date.now();
+    if (lastRecordedHistoryKey === dedupKey) {
+      return;
+    }
+    lastRecordedHistoryKey = dedupKey;
+
+    const countryObj = COUNTRY_OPTIONS.find(c => c.value === req?.country);
+    const countryName = countryObj ? countryObj.text : (req?.country === '10206' ? 'الصين (中国 / China)' : (req?.country || '中国'));
+
+    const historyRecord = {
+      id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
+      timestamp: now,
+      dateTime: new Date().toLocaleString('zh-CN', { hour12: false }),
+      status: status, // 'has_fine' | 'clean' | 'error'
+      request: {
+        letter1: req?.letter1 || '',
+        letter2: req?.letter2 || '',
+        letter3: req?.letter3 || '',
+        plateLetters: letters,
+        platenum: platenum,
+        fullPlate: fullPlate,
+        ownerType: req?.ownerType || 'passport',
+        foreignType: req?.foreignType || 'foreign',
+        country: req?.country || '10206',
+        countryName: countryName,
+        passportNo: req?.passportNo || '',
+        nationalId: req?.nationalId || '',
+        numeralMode: req?.numeralMode || numeralMode,
+        profileName: currentProfileId ? '已存配置' : '手动输入',
+        rawRequestJson: JSON.stringify(req, null, 2)
+      },
+      result: {
+        totalFine: resultObj?.totalFine || '0 جنيه',
+        violationCount: resultObj?.violationCount || '0',
+        reconcileFine: resultObj?.reconcileFine || '0 جنيه',
+        time: resultObj?.time || new Date().toLocaleTimeString(),
+        rawResponseText: rawSnapshot || ''
+      }
+    };
+
+    chrome.storage.local.get([HISTORY_STORAGE_KEY], (store) => {
+      const list = store[HISTORY_STORAGE_KEY] || [];
+      list.unshift(historyRecord);
+      const trimmed = list.slice(0, 500);
+      chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: trimmed }, () => {
+        renderInpageHistoryList();
+      });
+    });
+  }
+
+  function renderInpageHistoryList() {
+    const listEl = document.getElementById('ppo-drawer-list');
+    const countEl = document.getElementById('ppo-drawer-count');
+    if (!listEl) return;
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get([HISTORY_STORAGE_KEY], (res) => {
+        const list = res[HISTORY_STORAGE_KEY] || [];
+        if (countEl) countEl.textContent = list.length;
+
+        if (list.length === 0) {
+          listEl.innerHTML = '<div class="ppo-drawer-empty">暂无历史查询记录</div>';
+          return;
+        }
+
+        const recent = list.slice(0, 15);
+        listEl.innerHTML = recent.map(rec => {
+          const letters = [rec.request?.letter1, rec.request?.letter2, rec.request?.letter3].filter(Boolean).join(' ') || '-';
+          const num = rec.request?.platenum || '-';
+          const fine = rec.result?.totalFine || '0 جنيه';
+          const count = rec.result?.violationCount || '0';
+          const isError = rec.status === 'error';
+          const isFine = !isError && (parseFloat(fine.replace(/[^\d.]/g, '')) > 0 || parseInt(count, 10) > 0);
+
+          return `
+            <div class="ppo-drawer-item ${isFine ? 'has-fine' : ''}">
+              <div class="ppo-d-left">
+                <div class="ppo-d-plate">
+                  <span class="ppo-d-letters">${letters}</span>
+                  <span class="ppo-d-num">${num}</span>
+                </div>
+                <div class="ppo-d-time">${rec.dateTime || ''} · ${rec.request?.passportNo || rec.request?.nationalId || ''}</div>
+              </div>
+              <div class="ppo-d-right">
+                <div class="ppo-d-fine ${isFine ? 'gold' : ''}">${isError ? '出错' : fine}</div>
+                <button type="button" class="ppo-d-refill-btn" data-id="${rec.id}">填入</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        listEl.querySelectorAll('.ppo-d-refill-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            const target = list.find(r => r.id === id);
+            if (target && target.request) {
+              setFormDataToUI(target.request);
+              showToast(`已填入历史记录: ${target.request.fullPlate}`);
+              document.getElementById('ppo-history-drawer')?.classList.remove('show');
+            }
+          });
+        });
+      });
+    }
   }
 
   // 5. 跨页面任务接收与执行 (带自适应轮询等待，确保 APEX 异步组件加载就绪)
@@ -1002,24 +1461,43 @@
     });
   }
 
-  // 6. 全局多配置管理体系 (纯原生 chrome.storage.local，跨全网全浏览器统一共享，不依赖任何特定站点)
+  // 6. 全局多配置管理体系 (纯原生 chrome.storage.local + chrome.storage.sync 双重灾备，跨全网全浏览器统一共享，永不丢失)
+  const DRAFT_KEY = 'ppo_traffic_live_draft';
+
+  function saveProfilesListPermanently(list, activeId, callback) {
+    const payload = {
+      [STORAGE_KEY]: list,
+      [LAST_ACTIVE_KEY]: activeId
+    };
+
+    chrome.storage.local.set(payload, () => {
+      if (typeof chrome.storage.sync !== 'undefined') {
+        try {
+          chrome.storage.sync.set(payload, () => {});
+        } catch (e) {}
+      }
+      if (typeof callback === 'function') callback();
+    });
+  }
+
   function syncProfilesFromStorage() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get([STORAGE_KEY, LAST_ACTIVE_KEY, LAST_RESULT_KEY], (res) => {
-        const list = res[STORAGE_KEY] || [];
-        renderProfileDropdown(list);
+      chrome.storage.local.get([STORAGE_KEY, LAST_ACTIVE_KEY, LAST_RESULT_KEY, DRAFT_KEY], (res) => {
+        let list = res[STORAGE_KEY] || [];
+        let lastId = res[LAST_ACTIVE_KEY];
 
-        const lastId = res[LAST_ACTIVE_KEY];
-        const target = list.find(p => p.id === lastId) || (list.length > 0 ? list[0] : null);
-        if (target) {
-          applyProfileObj(target);
+        // 若 local 为空，从 sync 云端恢复
+        if (list.length === 0 && typeof chrome.storage.sync !== 'undefined') {
+          chrome.storage.sync.get([STORAGE_KEY, LAST_ACTIVE_KEY], (syncRes) => {
+            if (syncRes && syncRes[STORAGE_KEY] && syncRes[STORAGE_KEY].length > 0) {
+              list = syncRes[STORAGE_KEY];
+              lastId = syncRes[LAST_ACTIVE_KEY] || lastId;
+              chrome.storage.local.set({ [STORAGE_KEY]: list, [LAST_ACTIVE_KEY]: lastId });
+            }
+            processLoadedProfiles(list, lastId, res);
+          });
         } else {
-          const countrySelect = document.getElementById('ppo-in-country');
-          if (countrySelect) countrySelect.value = '10206';
-        }
-
-        if (res[LAST_RESULT_KEY]) {
-          renderResultBanner(res[LAST_RESULT_KEY]);
+          processLoadedProfiles(list, lastId, res);
         }
       });
 
@@ -1046,6 +1524,27 @@
     }
   }
 
+  function processLoadedProfiles(list, lastId, res) {
+    renderProfileDropdown(list);
+
+    const target = list.find(p => p.id === lastId) || (list.length > 0 ? list[0] : null);
+    if (target) {
+      applyProfileObj(target);
+    } else {
+      // 若无配置，检查是否有正在编辑的实时草稿
+      if (res && res[DRAFT_KEY]) {
+        applyDraftObj(res[DRAFT_KEY]);
+      } else {
+        const countrySelect = document.getElementById('ppo-in-country');
+        if (countrySelect) countrySelect.value = '10206';
+      }
+    }
+
+    if (res && res[LAST_RESULT_KEY]) {
+      renderResultBanner(res[LAST_RESULT_KEY]);
+    }
+  }
+
   function renderProfileDropdown(list) {
     const dropdown = document.getElementById('ppo-profile-dropdown');
     if (!dropdown) return;
@@ -1063,6 +1562,11 @@
       }
       dropdown.appendChild(opt);
     });
+
+    const updateBtn = document.getElementById('ppo-btn-update-profile');
+    if (updateBtn) {
+      updateBtn.style.display = currentProfileId ? 'inline-flex' : 'none';
+    }
   }
 
   function saveNewProfile(remarkName) {
@@ -1087,18 +1591,55 @@
 
       list.push(newProfile);
 
-      chrome.storage.local.set({
-        [STORAGE_KEY]: list,
-        [LAST_ACTIVE_KEY]: id
-      }, () => {
+      saveProfilesListPermanently(list, id, () => {
         currentProfileId = id;
         renderProfileDropdown(list);
-        showToast(`✅ 已存入浏览器本地统一存储: ${newProfile.remark}`);
+        const updateBtn = document.getElementById('ppo-btn-update-profile');
+        if (updateBtn) updateBtn.style.display = 'inline-flex';
+        showToast(`✅ 已永久存入浏览器本地与云端: ${newProfile.remark}`);
+      });
+    });
+  }
+
+  function updateCurrentProfile() {
+    if (!currentProfileId) {
+      showToast('⚠️ 未选中任何配置，请点击「➕ 新增」', true);
+      return;
+    }
+
+    chrome.storage.local.get([STORAGE_KEY], (res) => {
+      let list = res[STORAGE_KEY] || [];
+      const index = list.findIndex(p => p.id === currentProfileId);
+      if (index === -1) {
+        showToast('⚠️ 未找到当前配置', true);
+        return;
+      }
+
+      const formData = getFormDataFromUI();
+      const oldRemark = list[index].remark;
+
+      list[index] = {
+        ...formData,
+        id: currentProfileId,
+        remark: oldRemark || formData.passportNo || formData.platenum || '未命名配置'
+      };
+
+      saveProfilesListPermanently(list, currentProfileId, () => {
+        renderProfileDropdown(list);
+        showToast(`✅ 已永久覆盖更新「${list[index].remark}」`);
       });
     });
   }
 
   function applyProfileById(id) {
+    if (!id) {
+      currentProfileId = null;
+      chrome.storage.local.set({ [LAST_ACTIVE_KEY]: null });
+      const updateBtn = document.getElementById('ppo-btn-update-profile');
+      if (updateBtn) updateBtn.style.display = 'none';
+      return;
+    }
+
     chrome.storage.local.get([STORAGE_KEY], (res) => {
       const list = res[STORAGE_KEY] || [];
       const profile = list.find(p => p.id === id);
@@ -1115,7 +1656,24 @@
     const profileDropdown = document.getElementById('ppo-profile-dropdown');
     if (profileDropdown) profileDropdown.value = profile.id;
 
+    const updateBtn = document.getElementById('ppo-btn-update-profile');
+    if (updateBtn) updateBtn.style.display = 'inline-flex';
+
     showToast(`👤 已载入配置: ${profile.remark}`);
+  }
+
+  function applyDraftObj(draft) {
+    if (!draft) return;
+    setFormDataToUI(draft);
+  }
+
+  let draftDebounceTimer = null;
+  function saveLiveDraft() {
+    if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
+    draftDebounceTimer = setTimeout(() => {
+      const data = getFormDataFromUI();
+      chrome.storage.local.set({ [DRAFT_KEY]: data });
+    }, 300);
   }
 
   function deleteCurrentProfile() {
@@ -1131,10 +1689,7 @@
 
       list = list.filter(p => p.id !== currentProfileId);
 
-      chrome.storage.local.set({
-        [STORAGE_KEY]: list,
-        [LAST_ACTIVE_KEY]: null
-      }, () => {
+      saveProfilesListPermanently(list, null, () => {
         currentProfileId = null;
         renderProfileDropdown(list);
         clearForm();
@@ -1155,6 +1710,9 @@
     const profileDropdown = document.getElementById('ppo-profile-dropdown');
     if (profileDropdown) profileDropdown.value = '';
     currentProfileId = null;
+
+    const updateBtn = document.getElementById('ppo-btn-update-profile');
+    if (updateBtn) updateBtn.style.display = 'none';
 
     setActiveLetterFocus('letter1');
     document.getElementById('ppo-in-letter1')?.focus();

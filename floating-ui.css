@@ -124,6 +124,304 @@
   color: #fff;
 }
 
+.ppo-tool-btn-heal {
+  width: auto !important;
+  padding: 3px 8px !important;
+  background: rgba(16, 185, 129, 0.15) !important;
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  color: #34d399 !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: 10px !important;
+  direction: ltr !important;
+}
+
+.ppo-tool-btn-heal:hover {
+  background: rgba(16, 185, 129, 0.3) !important;
+  color: #ffffff !important;
+  border-color: #10b981 !important;
+}
+
+.ppo-tool-btn-history {
+  width: auto !important;
+  padding: 3px 8px !important;
+  background: rgba(212, 175, 55, 0.15) !important;
+  border: 1px solid rgba(212, 175, 55, 0.35) !important;
+  color: #fef08a !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: 10px !important;
+  direction: ltr !important;
+}
+
+.ppo-tool-btn-history:hover {
+  background: rgba(212, 175, 55, 0.3) !important;
+  color: #ffffff !important;
+  border-color: #d4af37 !important;
+}
+
+/* 智能自愈与异常诊断横幅 */
+.ppo-diagnostic-banner {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(245, 158, 11, 0.15));
+  border-bottom: 1.5px solid rgba(245, 158, 11, 0.6);
+  padding: 10px 16px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  animation: ppoFadeIn 0.25s ease;
+}
+
+.ppo-diagnostic-banner.show {
+  display: flex;
+}
+
+.ppo-diag-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  direction: ltr !important;
+}
+
+.ppo-diag-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ppo-diag-title-wrap {
+  flex: 1;
+}
+
+.ppo-diag-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fef08a;
+  margin-bottom: 2px;
+}
+
+.ppo-diag-desc {
+  font-size: 11px;
+  color: #e2e8f0;
+  line-height: 1.4;
+}
+
+.ppo-diag-close {
+  background: transparent;
+  border: none;
+  color: var(--ppo-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.ppo-diag-close:hover {
+  color: #fff;
+}
+
+.ppo-diag-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 28px;
+  direction: ltr !important;
+}
+
+.ppo-diag-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ppo-diag-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: #fff;
+}
+
+.ppo-diag-btn.primary {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: #10b981;
+  color: #0b0f19;
+}
+
+.ppo-diag-btn.primary:hover {
+  background: linear-gradient(135deg, #34d399, #10b981);
+  color: #000;
+}
+
+/* 内置历史记录滑出抽屉 */
+.ppo-inpage-history-drawer {
+  position: absolute;
+  top: 54px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(13, 19, 33, 0.97);
+  backdrop-filter: blur(14px);
+  z-index: 50;
+  display: none;
+  flex-direction: column;
+  border-radius: 0 0 16px 16px;
+  animation: ppoDrawerSlide 0.2s ease-out;
+}
+
+.ppo-inpage-history-drawer.show {
+  display: flex;
+}
+
+@keyframes ppoDrawerSlide {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ppo-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--ppo-border);
+  direction: ltr !important;
+}
+
+.ppo-drawer-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ppo-gold);
+}
+
+.ppo-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ppo-drawer-action-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ppo-drawer-action-btn:hover {
+  background: var(--ppo-gold);
+  color: #000;
+  border-color: var(--ppo-gold);
+}
+
+.ppo-drawer-body {
+  padding: 12px 16px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  direction: ltr !important;
+}
+
+.ppo-drawer-empty {
+  text-align: center;
+  color: var(--ppo-text-muted);
+  font-size: 12px;
+  padding: 30px 0;
+}
+
+.ppo-drawer-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.ppo-drawer-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(212, 175, 55, 0.3);
+}
+
+.ppo-drawer-item.has-fine {
+  border-left: 3px solid var(--ppo-gold);
+}
+
+.ppo-d-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ppo-d-plate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ppo-d-letters {
+  font-family: 'Cairo', sans-serif;
+  color: #fef08a;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(212, 175, 55, 0.15);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.ppo-d-num {
+  font-weight: 700;
+  color: #fff;
+  font-size: 13px;
+}
+
+.ppo-d-time {
+  font-size: 10.5px;
+  color: var(--ppo-text-muted);
+}
+
+.ppo-d-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ppo-d-fine {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.ppo-d-fine.gold {
+  color: #fde047;
+}
+
+.ppo-d-refill-btn {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid #10b981;
+  color: #34d399;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ppo-d-refill-btn:hover {
+  background: #10b981;
+  color: #000;
+}
+
 /* 罚款结果捕捉展示横幅 (Result Banner) */
 .ppo-result-banner {
   background: linear-gradient(135deg, rgba(212, 175, 55, 0.15), rgba(16, 185, 129, 0.15));

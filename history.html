@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PPO 交通违章历史查询记录中心 (سجل استعلام المخالفات)</title>
+  <link rel="stylesheet" href="history.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="ppo-history-app">
+    <!-- 顶部导航栏 -->
+    <header class="ppo-top-nav">
+      <div class="nav-brand">
+        <div class="brand-icon">🚗</div>
+        <div class="brand-info">
+          <div class="brand-title">PPO 交通违章历史查询记录中心</div>
+          <div class="brand-subtitle">سجل استعلام مخالفات رخص المركبات - النيابة العامة المصرية</div>
+        </div>
+      </div>
+      <div class="nav-actions">
+        <button type="button" class="btn btn-outline" id="btn-open-profiles-mgr" title="管理所有已保存的常用车辆与人员配置">
+          <span>👤 常用配置管理</span>
+        </button>
+        <div class="export-dropdown-wrapper" id="export-dropdown-wrapper">
+          <button type="button" class="btn btn-outline" id="btn-export-menu" title="导出查询记录数据">
+            <span>📥 导出数据 ▼</span>
+          </button>
+          <div class="export-dropdown" id="export-dropdown">
+            <div class="export-item" id="btn-export-json">📄 导出完整 JSON 数据</div>
+            <div class="export-item" id="btn-export-csv">📊 导出 Excel/CSV 表格</div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-danger-outline" id="btn-clear-all" title="清空全部历史记录">
+          <span>🗑️ 清空历史</span>
+        </button>
+        <button type="button" class="btn btn-primary" id="btn-open-portal" title="打开埃及 PPO 违章查询官方网站">
+          <span>🌐 打开查询官网</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 统计仪表盘 -->
+    <section class="ppo-stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon-wrap blue">📋</div>
+        <div class="stat-content">
+          <div class="stat-label">总查询次数 (Total Queries)</div>
+          <div class="stat-value" id="stat-total-queries">0</div>
+        </div>
+      </div>
+      <div class="stat-card highlight">
+        <div class="stat-icon-wrap gold">💰</div>
+        <div class="stat-content">
+          <div class="stat-label">累计查获总罚款 (Total Fines)</div>
+          <div class="stat-value gold" id="stat-total-fines">0 جنيه</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon-wrap red">🚨</div>
+        <div class="stat-content">
+          <div class="stat-label">累计违章笔数 (Total Violations)</div>
+          <div class="stat-value red" id="stat-total-violations">0 笔</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon-wrap green">🚗</div>
+        <div class="stat-content">
+          <div class="stat-label">已查询独立车辆数 (Vehicles)</div>
+          <div class="stat-value" id="stat-unique-plates">0</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 搜索与筛选工具栏 -->
+    <section class="ppo-toolbar">
+      <div class="toolbar-left">
+        <!-- 搜索框 -->
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="search-input" placeholder="搜索车牌字母、车牌数字、护照号、国籍、时间..." autocomplete="off">
+          <button type="button" class="clear-search-btn" id="btn-clear-search" title="清除搜索内容">✕</button>
+        </div>
+
+        <!-- 状态过滤 -->
+        <div class="filter-pills" id="status-filters">
+          <button type="button" class="filter-pill active" data-status="all">全部 (<span id="count-all">0</span>)</button>
+          <button type="button" class="filter-pill with-fine" data-status="has_fine">有罚款/违章 (<span id="count-fine">0</span>)</button>
+          <button type="button" class="filter-pill clean" data-status="clean">无违章 (<span id="count-clean">0</span>)</button>
+          <button type="button" class="filter-pill error" data-status="error">查询异常 (<span id="count-error">0</span>)</button>
+        </div>
+      </div>
+
+      <div class="toolbar-right">
+        <!-- 排序下拉 -->
+        <div class="select-wrapper">
+          <label for="sort-select">排序：</label>
+          <select id="sort-select" class="custom-select">
+            <option value="time_desc">最新时间在前 (默认)</option>
+            <option value="time_asc">最早时间在前</option>
+            <option value="fine_desc">罚款金额从高到低</option>
+            <option value="fine_asc">罚款金额从低到高</option>
+            <option value="count_desc">违章笔数从多到少</option>
+          </select>
+        </div>
+
+        <!-- 视图切换 (表格 / 卡片) -->
+        <div class="view-toggle">
+          <button type="button" class="view-btn active" id="btn-view-table" title="表格视图">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          </button>
+          <button type="button" class="view-btn" id="btn-view-cards" title="卡片视图">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 主体列表区域 -->
+    <main class="ppo-main-container">
+      <!-- 表格视图 -->
+      <div class="table-container" id="history-table-container">
+        <table class="ppo-data-table">
+          <thead>
+            <tr>
+              <th style="width: 155px;">查询时间 (Time)</th>
+              <th style="width: 140px;">车牌号码 (Plate)</th>
+              <th style="width: 180px;">所有者/证件信息 (Owner)</th>
+              <th style="width: 110px; text-align: center;">违章笔数</th>
+              <th style="width: 140px; text-align: right;">总罚款金额 (Total)</th>
+              <th style="width: 140px; text-align: right;">和解罚款 (Reconcile)</th>
+              <th style="width: 100px; text-align: center;">状态</th>
+              <th style="width: 160px; text-align: center;">操作 (Actions)</th>
+            </tr>
+          </thead>
+          <tbody id="history-table-body">
+            <!-- 动态渲染 -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 卡片网格视图 (默认隐藏) -->
+      <div class="cards-grid-container" id="history-cards-container" style="display: none;">
+        <!-- 动态渲染 -->
+      </div>
+
+      <!-- 空状态提示 -->
+      <div class="empty-state" id="history-empty-state" style="display: none;">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">暂无匹配的历史查询记录</div>
+        <div class="empty-desc">每当您在埃及交通门户查询违章时，系统将自动把查询参数、结果与抓取快照保存在此处。</div>
+        <button type="button" class="btn btn-primary" id="btn-empty-open-portal">前往官网进行一次查询</button>
+      </div>
+    </main>
+
+    <!-- 底部状态条 -->
+    <footer class="ppo-footer-bar">
+      <div class="footer-left">
+        <span>当前显示 <strong id="visible-count">0</strong> 条记录 / 共 <strong id="total-count">0</strong> 条</span>
+      </div>
+      <div class="footer-right">
+        <span class="hint-text">💡 提示：点击任意记录的「详情」可查看原始请求与抓取快照，点击「填表」可一键自动复用该车辆信息。</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 详情弹窗抽屉 (Record Details Modal) -->
+  <div class="ppo-modal-overlay" id="detail-modal-overlay">
+    <div class="ppo-modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-badge">📋 详细记录详情</span>
+          <span class="modal-subtitle" id="modal-record-id">ID: -</span>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-modal-close" title="关闭">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- 顶部核心结果徽章 -->
+        <div class="modal-result-banner" id="modal-result-banner">
+          <div class="modal-result-item highlight">
+            <span class="label">💰 总罚款 (اجمالي الغرامات)</span>
+            <span class="value gold" id="modal-res-total">-</span>
+          </div>
+          <div class="modal-result-item">
+            <span class="label">🚨 违章笔数 (عدد المخالفات)</span>
+            <span class="value red" id="modal-res-count">-</span>
+          </div>
+          <div class="modal-result-item">
+            <span class="label">🤝 和解罚款 (غرامات التصالح)</span>
+            <span class="value green" id="modal-res-reconcile">-</span>
+          </div>
+          <div class="modal-result-item">
+            <span class="label">⏱️ 查询时间</span>
+            <span class="value" id="modal-res-time">-</span>
+          </div>
+        </div>
+
+        <!-- 结构化字段两列网格 -->
+        <div class="detail-section">
+          <div class="section-title">🚗 查询请求字段 (Request Fields)</div>
+          <div class="fields-grid">
+            <div class="field-item">
+              <span class="f-label">完整车牌 (Plate)</span>
+              <span class="f-val plate-badge" id="modal-req-plate">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">车牌字母分解 (Letters)</span>
+              <span class="f-val" id="modal-req-letters">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">车牌数字 (Plate Number)</span>
+              <span class="f-val" id="modal-req-num">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">所有者证件类型</span>
+              <span class="f-val" id="modal-req-owner-type">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">护照号 / 证件号</span>
+              <span class="f-val font-mono" id="modal-req-id-num">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">国籍 (Country)</span>
+              <span class="f-val" id="modal-req-country">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">数字模式 (Numeral Mode)</span>
+              <span class="f-val" id="modal-req-numeral">-</span>
+            </div>
+            <div class="field-item">
+              <span class="f-label">所属人员配置 (Profile)</span>
+              <span class="f-val" id="modal-req-profile">-</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 原始请求数据 (Raw Request JSON) -->
+        <div class="detail-section">
+          <div class="section-header-wrap">
+            <div class="section-title">📦 原始请求 JSON 数据 (Raw Request Payload)</div>
+            <button type="button" class="btn-copy" id="btn-copy-req-json">📋 复制 JSON</button>
+          </div>
+          <pre class="code-block" id="modal-raw-req-json">// 正在加载...</pre>
+        </div>
+
+        <!-- 原始响应抓取内容 (Raw Response / Scraped Snapshot) -->
+        <div class="detail-section">
+          <div class="section-header-wrap">
+            <div class="section-title">📄 官方页面响应与抓取快照 (Raw Response / Scraped Page Text)</div>
+            <button type="button" class="btn-copy" id="btn-copy-resp-text">📋 复制文本</button>
+          </div>
+          <pre class="code-block" id="modal-raw-resp-text">// 正在加载...</pre>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="btn-modal-delete-item">🗑️ 删除此记录</button>
+        <button type="button" class="btn btn-primary" id="btn-modal-refill-btn">🚀 再次使用此车牌一键填表查询</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 常用车辆与人员配置库管理弹窗 -->
+  <div class="modal-overlay" id="profiles-modal-overlay">
+    <div class="modal-card" style="max-width: 800px;">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>👤 常用车辆与人员配置库管理</span>
+          <span style="font-size: 12px; color: var(--text-muted); font-weight: normal; margin-left: 8px;">(永久双重保存在浏览器本地及云端同步)</span>
+        </div>
+        <button type="button" class="modal-close" id="btn-close-profiles-modal">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <div style="font-size: 13px; color: var(--text-main);">
+            已存配置: <strong id="profiles-mgr-count" style="color: var(--primary-gold);">0</strong> 辆车/人
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button type="button" class="btn btn-outline" id="btn-export-profiles-json" style="padding: 6px 12px; font-size: 12px;">
+              <span>📥 导出配置备份 (JSON)</span>
+            </button>
+            <label class="btn btn-outline" style="padding: 6px 12px; font-size: 12px; cursor: pointer; margin: 0;">
+              <span>📤 导入配置备份</span>
+              <input type="file" id="input-import-profiles" accept=".json" style="display: none;">
+            </label>
+          </div>
+        </div>
+
+        <div id="profiles-mgr-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto;">
+          <!-- 动态渲染配置列表 -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="btn-profiles-modal-done">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="utils.js"></script>
+  <script src="history.js"></script>
+</body>
+</html>

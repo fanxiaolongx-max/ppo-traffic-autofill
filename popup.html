@@ -18,6 +18,7 @@
         </div>
       </div>
       <div style="display: flex; align-items: center; gap: 8px;">
+        <button type="button" class="ppo-history-nav-btn" id="ppo-btn-open-history" title="打开历史查询记录大窗口">📜 历史记录</button>
         <button type="button" class="ppo-icon-btn" id="ppo-btn-open-portal" title="在浏览器中直接打开官方查询网页">🌐</button>
       </div>
     </div>
@@ -58,8 +59,11 @@
           <select class="ppo-profile-select" id="ppo-profile-dropdown">
             <option value="">-- 选择已存人员配置 (点击切换) --</option>
           </select>
+          <button type="button" class="ppo-profile-btn" id="ppo-btn-update-profile" title="将当前修改覆盖更新到选中的配置" style="display: none; background: rgba(212, 175, 55, 0.2); border-color: var(--ppo-gold); color: #fef08a;">
+            <span>💾 覆盖更新</span>
+          </button>
           <button type="button" class="ppo-profile-btn" id="ppo-btn-toggle-save" title="将当前填写的表单存为新人员配置">
-            <span>➕ 存为配置</span>
+            <span>➕ 新增</span>
           </button>
           <button type="button" class="ppo-profile-btn danger" id="ppo-btn-delete-profile" title="删除当前选中的人员配置">
             <span>🗑️</span>
@@ -220,6 +224,9 @@
       <div class="ppo-btn-group">
         <button type="button" class="ppo-btn-sub" id="ppo-btn-fill">
           <span>⚡ 仅填入表单</span>
+        </button>
+        <button type="button" class="ppo-btn-sub" id="ppo-btn-heal-portal" title="强制清理卡顿遮罩与自愈">
+          <span>🛠️ 自愈解卡</span>
         </button>
         <button type="button" class="ppo-btn-sub" id="ppo-btn-clear" title="清空所有输入">
           <span>🧹 清空</span>

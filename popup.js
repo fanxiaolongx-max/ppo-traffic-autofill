@@ -88,8 +88,11 @@ function cleanPassportNumber(str) {
   return str.trim().replace(/^[A-Za-z]{1,3}/, '').trim();
 }
 
-function bindEvents() {
-  // 顶部历史记录大窗口按钮
+  // 顶部备份与历史记录入口
+  document.getElementById('ppo-btn-backup-quick')?.addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
+  });
+
   document.getElementById('ppo-btn-open-history')?.addEventListener('click', () => {
     chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
   });

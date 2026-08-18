@@ -24,13 +24,27 @@
         <button type="button" class="btn btn-outline" id="btn-open-profiles-mgr" title="管理所有已保存的常用车辆与人员配置">
           <span>👤 常用配置管理</span>
         </button>
+        <!-- 全局数据备份与恢复中心 -->
+        <div class="export-dropdown-wrapper" id="backup-dropdown-wrapper">
+          <button type="button" class="btn btn-outline" id="btn-backup-menu" title="备份与恢复插件所有数据（含车辆人员配置、历史记录、服务监控）">
+            <span>💾 全局备份/恢复 ▼</span>
+          </button>
+          <div class="export-dropdown" id="backup-dropdown">
+            <div class="export-item" id="btn-export-full-backup">📦 导出完整全局备份 (JSON)</div>
+            <label class="export-item" style="cursor: pointer; margin: 0; display: block;">
+              <span>📤 导入并恢复全局备份 (JSON)</span>
+              <input type="file" id="input-import-full-backup" accept=".json" style="display: none;">
+            </label>
+          </div>
+        </div>
+        <!-- 历史数据单独导出 -->
         <div class="export-dropdown-wrapper" id="export-dropdown-wrapper">
           <button type="button" class="btn btn-outline" id="btn-export-menu" title="导出查询记录数据">
-            <span>📥 导出数据 ▼</span>
+            <span>📥 导出历史 ▼</span>
           </button>
           <div class="export-dropdown" id="export-dropdown">
-            <div class="export-item" id="btn-export-json">📄 导出完整 JSON 数据</div>
-            <div class="export-item" id="btn-export-csv">📊 导出 Excel/CSV 表格</div>
+            <div class="export-item" id="btn-export-json">📄 导出历史记录 (JSON)</div>
+            <div class="export-item" id="btn-export-csv">📊 导出历史表格 (Excel/CSV)</div>
           </div>
         </div>
         <button type="button" class="btn btn-danger-outline" id="btn-clear-all" title="清空全部历史记录">

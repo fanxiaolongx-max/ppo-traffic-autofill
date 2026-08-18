@@ -42,7 +42,7 @@
       ],
       "js": ["utils.js", "content.js"],
       "css": ["floating-ui.css"],
-      "run_at": "document_end"
+      "run_at": "document_idle"
     }
   ]
 }

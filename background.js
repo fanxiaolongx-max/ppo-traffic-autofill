@@ -138,14 +138,19 @@ function handleShowResultNotification(scraped, fullPlate) {
 
   // 2. 弹出系统级桌面通知 (右上角即时弹出)
   try {
-    if (chrome.notifications) {
+    if (typeof chrome !== 'undefined' && chrome.notifications && typeof chrome.notifications.create === 'function') {
+      const iconUrl = chrome.runtime.getURL('icons/icon128.png');
       chrome.notifications.create('ppo_res_' + Date.now(), {
         type: 'basic',
-        iconUrl: 'icons/icon128.png',
+        iconUrl: iconUrl,
         title: count > 0 ? `🚗 查到违章：总罚款 ${totalFine}` : `✅ 无违章记录：总罚款 0 镑`,
         message: `车牌: ${fullPlate || '埃及车辆'} | 违章笔数: ${count} 笔\n点击立即查看完整明细与历史档案 ↗`,
         priority: 2,
         requireInteraction: false
+      }, () => {
+        if (chrome.runtime.lastError) {
+          // ignore or log
+        }
       });
     }
   } catch (e) {}
@@ -153,7 +158,8 @@ function handleShowResultNotification(scraped, fullPlate) {
 
 // 3. 监听标签页 URL 变化：智能抓取结果页数据并触发角标与通知
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  const currentUrl = changeInfo.url || tab.url || '';
+  if (changeInfo.status !== 'complete') return;
+  const currentUrl = tab.url || changeInfo.url || '';
   if (currentUrl.includes('traffic-fines-summary') || currentUrl.includes('traffic?clear=201')) {
     chrome.scripting.executeScript({
       target: { tabId: tabId },
@@ -292,7 +298,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// 3. 执行查询任务的核心调度逻辑
+// 4. 执行查询任务的核心调度逻辑
 function dispatchQueryTask(queryData) {
   const taskPayload = {
     data: {
@@ -312,22 +318,19 @@ function dispatchQueryTask(queryData) {
   };
 
   chrome.storage.local.set({ pendingPpoTask: taskPayload }, () => {
-    // 兼容所有 ppo.gov.eg 域名（含 www 与非 www）
     chrome.tabs.query({}, (tabs) => {
       const ppoTab = tabs.find(t => t.url && (t.url.includes('ppo.gov.eg/ppo/') || t.url.includes('ppo.gov.eg')));
 
       if (ppoTab) {
         chrome.tabs.update(ppoTab.id, { active: true }, () => {
-          // 尝试直接发送消息填表
           chrome.tabs.sendMessage(ppoTab.id, {
             action: 'direct_fill',
             data: taskPayload.data,
             autoSubmit: true
           }, () => {
-            // 若该标签页在插件刷新前就打开过导致未注入脚本，自动刷新以载入自动填表任务
-            if (chrome.runtime.lastError) {
-              console.log("标签页脚本未就绪，正在刷新标签页以载入自动填表任务...");
-              chrome.tabs.reload(ppoTab.id);
+            // 如果发送不通且当前在其他子页面，平滑导航回主表单页
+            if (chrome.runtime.lastError && ppoTab.url && !ppoTab.url.includes('/traffic')) {
+              chrome.tabs.update(ppoTab.id, { url: TARGET_PPO_URL });
             }
           });
         });

@@ -1468,7 +1468,7 @@
           setFormDataToUI(task.data);
           showToast('⚡ 检测到自动填表任务，正在准备填入...', false);
           
-          // 轮询等待表单或 Tab 加载就绪 (最多等待 4 秒)
+          let hasClickedTab = false;
           let retries = 0;
           const timer = setInterval(() => {
             retries++;
@@ -1481,16 +1481,17 @@
               clearInterval(timer);
               setTimeout(() => {
                 fillPPOForm(task.data, task.autoSubmit);
-              }, 250);
-            } else if (vehicleTab) {
-              vehicleTab.click();
+              }, 200);
+            } else if (vehicleTab && !hasClickedTab) {
+              hasClickedTab = true;
+              try { vehicleTab.click(); } catch(e){}
             }
 
             if (retries >= 15) {
               clearInterval(timer);
               fillPPOForm(task.data, task.autoSubmit);
             }
-          }, 250);
+          }, 300);
         }
       });
     }
@@ -1777,9 +1778,50 @@
     }, 2800);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', createFloatingUI);
-  } else {
+  function ensureFormFieldsInteractable() {
+    const fields = [
+      'P14_LICENSE_LETTERS_FIRST',
+      'P14_LICENSE_LETTERS_SECOND',
+      'P14_LICENSE_LETTERS_LAST',
+      'P14_LICENSE_NUMBERS',
+      'P14_IDENTIFIER_NUMBER',
+      'P14_NATIONALITY_ID'
+    ];
+    fields.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.disabled = false;
+        el.removeAttribute('disabled');
+        el.style.pointerEvents = 'auto';
+      }
+    });
+  }
+
+  function initPageLoadUnfreezer() {
+    // 页面加载初期 1.2s, 3s, 6s 自动穿透死锁遮罩，防止埃及官网慢速资产阻塞页面交互
+    setTimeout(() => {
+      removeBlockingOverlays(false);
+    }, 1200);
+
+    setTimeout(() => {
+      removeBlockingOverlays(true);
+      ensureFormFieldsInteractable();
+    }, 3000);
+
+    setTimeout(() => {
+      removeBlockingOverlays(true);
+      ensureFormFieldsInteractable();
+    }, 6000);
+  }
+
+  function initApp() {
     createFloatingUI();
+    initPageLoadUnfreezer();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
   }
 })();

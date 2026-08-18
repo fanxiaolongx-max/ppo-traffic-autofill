@@ -113,13 +113,31 @@ function bindEvents() {
 
   document.getElementById('btn-clear-all')?.addEventListener('click', handleClearAll);
 
-  // 导出下拉菜单切换
+  // 1. 全局备份/恢复下拉菜单切换
+  const backupBtn = document.getElementById('btn-backup-menu');
+  const backupDropdown = document.getElementById('backup-dropdown');
+  if (backupBtn && backupDropdown) {
+    backupBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      backupDropdown.classList.toggle('show');
+      exportDropdown?.classList.remove('show');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!backupDropdown.contains(e.target) && e.target !== backupBtn) {
+        backupDropdown.classList.remove('show');
+      }
+    });
+  }
+
+  // 2. 导出历史下拉菜单切换
   const exportBtn = document.getElementById('btn-export-menu');
   const exportDropdown = document.getElementById('export-dropdown');
   if (exportBtn && exportDropdown) {
     exportBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       exportDropdown.classList.toggle('show');
+      backupDropdown?.classList.remove('show');
     });
 
     document.addEventListener('click', (e) => {
@@ -129,7 +147,19 @@ function bindEvents() {
     });
   }
 
-  // 导出功能
+  // 全局备份与恢复功能绑定
+  document.getElementById('btn-export-full-backup')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    backupDropdown?.classList.remove('show');
+    exportFullGlobalBackup();
+  });
+
+  document.getElementById('input-import-full-backup')?.addEventListener('change', (e) => {
+    backupDropdown?.classList.remove('show');
+    handleImportFullBackup(e);
+  });
+
+  // 历史记录导出功能
   document.getElementById('btn-export-json')?.addEventListener('click', (e) => {
     e.stopPropagation();
     exportDropdown?.classList.remove('show');
@@ -681,7 +711,163 @@ function handleClearAll() {
   }
 }
 
-// 导出为 JSON
+// 1. 全量全局数据导出 (Full Global Backup: 包含车辆人员配置、历史记录、监控数据与表单状态)
+function exportFullGlobalBackup() {
+  chrome.storage.local.get([
+    'ppo_traffic_profiles_v2',
+    'ppo_traffic_last_active_id',
+    'ppo_traffic_history_v1',
+    'ppo_traffic_server_probes_v1',
+    'ppo_traffic_live_draft',
+    'ppo_traffic_last_result'
+  ], (res) => {
+    const fullBackup = {
+      app: "PPO Traffic AutoFill",
+      backupType: "full_global_backup",
+      version: "1.2.0",
+      exportTimestamp: Date.now(),
+      exportDate: new Date().toLocaleString('zh-CN', { hour12: false }),
+      profiles: res.ppo_traffic_profiles_v2 || [],
+      lastActiveProfileId: res.ppo_traffic_last_active_id || null,
+      history: res.ppo_traffic_history_v1 || [],
+      serverProbes: res.ppo_traffic_server_probes_v1 || [],
+      liveDraft: res.ppo_traffic_live_draft || null,
+      lastResult: res.ppo_traffic_last_result || null,
+      summary: {
+        totalProfiles: (res.ppo_traffic_profiles_v2 || []).length,
+        totalHistoryRecords: (res.ppo_traffic_history_v1 || []).length,
+        totalProbes: (res.ppo_traffic_server_probes_v1 || []).length
+      }
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(fullBackup, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const timeStr = new Date().toTimeString().slice(0, 5).replace(/:/g, '');
+    downloadAnchor.setAttribute("download", `ppo_traffic_FULL_BACKUP_${nowStr}_${timeStr}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  });
+}
+
+// 2. 全量全局数据导入恢复 (Full Global Restore: 智能合并恢复)
+function handleImportFullBackup(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const backup = JSON.parse(event.target.result);
+      
+      let importedProfiles = [];
+      let importedHistory = [];
+      let importedProbes = [];
+
+      if (Array.isArray(backup)) {
+        importedProfiles = backup;
+      } else if (backup.profiles || backup.history || backup.serverProbes) {
+        importedProfiles = backup.profiles || [];
+        importedHistory = backup.history || [];
+        importedProbes = backup.serverProbes || [];
+      } else {
+        alert('⚠️ 无法识别的备份文件格式！请确认选择的是正确的 PPO 备份 JSON 文件。');
+        return;
+      }
+
+      const profCount = importedProfiles.length;
+      const histCount = importedHistory.length;
+
+      const confirmMsg = `📦 成功读取全局备份文件！\n\n` +
+        `• 常用车辆与人员配置: ${profCount} 辆/人\n` +
+        `• 历史违章查询档案: ${histCount} 条\n` +
+        `• 服务器状态采样: ${importedProbes.length} 个\n\n` +
+        `是否立即【确定】以智能合并方式恢复到当前浏览器？（已有数据不会丢失）`;
+
+      if (!confirm(confirmMsg)) {
+        e.target.value = '';
+        return;
+      }
+
+      chrome.storage.local.get([
+        'ppo_traffic_profiles_v2',
+        'ppo_traffic_history_v1',
+        'ppo_traffic_server_probes_v1'
+      ], (localRes) => {
+        let existingProfiles = localRes.ppo_traffic_profiles_v2 || [];
+        let existingHistory = localRes.ppo_traffic_history_v1 || [];
+        let existingProbes = localRes.ppo_traffic_server_probes_v1 || [];
+
+        // 1. 合并配置 (按 ID 或车牌去重)
+        importedProfiles.forEach(p => {
+          if (p && (p.platenum || p.passportNo || p.nationalId)) {
+            const exists = existingProfiles.some(e => e.id === p.id || (e.remark === p.remark && e.platenum === p.platenum));
+            if (!exists) {
+              if (!p.id) p.id = Date.now() + Math.random().toString(36).substr(2, 4);
+              existingProfiles.push(p);
+            }
+          }
+        });
+
+        // 2. 合并历史记录 (按 ID 或 timestamp+车牌去重)
+        importedHistory.forEach(h => {
+          if (h && h.request) {
+            const exists = existingHistory.some(e => e.id === h.id || (e.timestamp === h.timestamp && e.request?.fullPlate === h.request?.fullPlate));
+            if (!exists) {
+              if (!h.id) h.id = 'hist_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+              existingHistory.push(h);
+            }
+          }
+        });
+        existingHistory.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        // 3. 合并服务器探测
+        if (importedProbes.length > 0) {
+          importedProbes.forEach(pb => {
+            if (!existingProbes.some(e => e.timestamp === pb.timestamp)) {
+              existingProbes.push(pb);
+            }
+          });
+          existingProbes.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          if (existingProbes.length > 90) existingProbes = existingProbes.slice(-90);
+        }
+
+        const payload = {
+          ppo_traffic_profiles_v2: existingProfiles,
+          ppo_traffic_history_v1: existingHistory,
+          ppo_traffic_server_probes_v1: existingProbes
+        };
+
+        chrome.storage.local.set(payload, () => {
+          if (typeof chrome.storage.sync !== 'undefined') {
+            try {
+              chrome.storage.sync.set({ ppo_traffic_profiles_v2: existingProfiles }, () => {});
+            } catch(e){}
+          }
+
+          // 刷新所有 UI
+          allRecords = existingHistory;
+          updateDashboardStats();
+          applyFiltersAndRender();
+          renderProfilesManagerUI(existingProfiles);
+          renderServerHealthUI(existingProbes);
+
+          alert(`🎉 恭喜！全局数据已全部成功恢复！\n当前车辆配置: ${existingProfiles.length} 个 | 历史记录: ${existingHistory.length} 条`);
+        });
+      });
+
+    } catch (err) {
+      alert('解析备份文件失败: ' + err.message);
+    } finally {
+      e.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
+// 导出为 JSON (仅历史记录)
 function exportAsJSON() {
   if (allRecords.length === 0) {
     alert('暂无数据可导出');

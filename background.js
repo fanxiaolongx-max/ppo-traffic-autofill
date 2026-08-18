@@ -167,10 +167,20 @@ async function executeApexDirectQuery(queryData) {
   if (pMd5Checksum) postParams.append('p_md5_checksum', pMd5Checksum);
   postParams.append('p_json', JSON.stringify(pJsonObj));
 
+  // 同时补充标准表单字段与 p_arg_names (确保 APEX PL/SQL 变量正确赋值)
+  itemsToSubmit.forEach(item => {
+    postParams.append(item.n, item.v);
+    postParams.append('p_arg_names', item.n);
+    postParams.append('p_arg_values', item.v);
+  });
+
   const postController = new AbortController();
-  const postTimeout = setTimeout(() => postController.abort(), 15000);
+  const postTimeout = setTimeout(() => postController.abort(), 18000);
 
   let respText = '';
+  let respStatus = 200;
+  let finalUrl = '';
+
   try {
     const postResp = await fetch(postUrl, {
       method: 'POST',
@@ -184,6 +194,8 @@ async function executeApexDirectQuery(queryData) {
       signal: postController.signal
     });
     clearTimeout(postTimeout);
+    respStatus = postResp.status;
+    finalUrl = postResp.url || postUrl;
     respText = await postResp.text();
   } catch (err) {
     clearTimeout(postTimeout);
@@ -205,30 +217,65 @@ async function executeApexDirectQuery(queryData) {
                      respText.match(/اجمالي غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/i);
   if (mReconcile) reconcileFine = mReconcile[1].replace(/\n/g, ' ').trim();
 
-  if (!totalFine && (respText.includes('لا توجد مخالفات') || respText.includes('0 جنيه') || respText.includes('بيانات المخالفات'))) {
+  // 检查是否被官方 WAF (Web Application Firewall / F5 BIG-IP) 防火墙拦截
+  if (respText.includes('Request Rejected') || respText.includes('The requested URL was rejected')) {
+    const supportIdMatch = respText.match(/Your support ID is:\s*([\d]+)/i);
+    const supportId = supportIdMatch ? supportIdMatch[1] : '';
+    throw new Error(`官方网络防火墙 (WAF) 拦截了直连发包 (Support ID: ${supportId || '-'})，正在自动切换为真实网页模拟模式`);
+  }
+
+  const isExplicitClean = respText.includes('لا توجد مخالفات') || respText.includes('لا توجد بيانات');
+
+  if (!totalFine && isExplicitClean) {
     totalFine = '0 جنيه';
     violationCount = '0';
     reconcileFine = '0 جنيه';
   }
 
   if (!totalFine && !violationCount) {
-    const errorMatch = respText.match(/class="[^"]*t-Alert--error[^"]*"[\s\S]*?<div class="t-Alert-title">([^<]+)<\/div>/i);
-    if (errorMatch) {
-      throw new Error(`官方提示: ${errorMatch[1].trim()}`);
-    }
-    totalFine = '0 جنيه';
-    violationCount = '0';
-    reconcileFine = '0 جنيه';
+    throw new Error('官方网关返回未预期的页面结构，正在自动切换至真实网页模式');
   }
 
   const durationMs = Date.now() - startTime;
+
+  // 组装完整的排查诊断详细日志
+  const debugDiagnosticLog = [
+    `=======================================================`,
+    `📡 [APEX协议极速直连 详细请求与响应诊断报告]`,
+    `=======================================================`,
+    `1. 目标地址: ${postUrl}`,
+    `2. 最终重定向URL: ${finalUrl}`,
+    `3. HTTP响应状态: ${respStatus}`,
+    `4. 提取到的Session令牌:`,
+    `   • p_instance (会话ID): ${pInstance}`,
+    `   • p_page_submission_id: ${pPageSubmissionId}`,
+    `   • p_md5_checksum: ${pMd5Checksum || '(无)'}`,
+    `   • salt: ${salt || '(无)'}`,
+    `   • protected: ${protectedToken || '(无)'}`,
+    `5. 提交的核心参数:`,
+    `   • 车牌: ${queryData.letter1} ${queryData.letter2} ${queryData.letter3} ${rawNum}`,
+    `   • 证件类型: ${isPassport ? '护照 (1429)' : '身份证 (2153)'}`,
+    `   • 护照号(过滤纯数字): ${rawPassport}`,
+    `   • 签发国籍: ${queryData.country || '10206'}`,
+    `6. 结果匹配情况:`,
+    `   • 总罚款: ${totalFine || '(未提取到)'}`,
+    `   • 违章笔数: ${violationCount || '(未提取到)'}`,
+    `   • 和解金额: ${reconcileFine || '(未提取到)'}`,
+    `   • 耗时: ${durationMs} ms`,
+    `-------------------------------------------------------`,
+    `7. 官方服务器返回的原始 HTML 文本 (前 3500 字符快照):`,
+    `-------------------------------------------------------`,
+    respText.slice(0, 3500)
+  ].join('\n');
+
   const scrapedResult = {
     totalFine: totalFine || '0 جنيه',
     violationCount: violationCount || '0',
     reconcileFine: reconcileFine || '0 جنيه',
     time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
     latencyMs: durationMs,
-    isDirectApi: true
+    isDirectApi: true,
+    rawDiagnosticLog: debugDiagnosticLog
   };
 
   // 5. 存储结果并触发系统通知与历史入库
@@ -289,7 +336,7 @@ function saveQueryToHistory(req, scraped, fullPlate) {
           reconcileFine: scraped.reconcileFine || '0 جنيه',
           time: scraped.time || new Date().toLocaleTimeString(),
           latencyMs: scraped.latencyMs,
-          rawResponseText: `[${scraped.isDirectApi ? 'APEX协议极速直连' : '后台智能抓取'}]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}\n耗时: ${scraped.latencyMs || '-'}ms`
+          rawResponseText: scraped.rawDiagnosticLog || `[${scraped.isDirectApi ? 'APEX协议极速直连' : '后台智能抓取'}]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}\n耗时: ${scraped.latencyMs || '-'}ms`
         }
       };
       historyList.unshift(newRecord);

@@ -982,10 +982,9 @@
         showToast('📡 正在等待官方违章数据库返回...', false);
       }
 
-      // Stage 2: T=8s - 自动第1级解卡（截断挂起静态资源 & 隐式扫描）
+      // Stage 2: T=8s - 自动第1级解卡（清理挂起遮罩 & 隐式扫描）
       if (queryWatchdogSeconds === 8) {
-        showToast('⚡ 官方响应较慢，已启动第 1 级加速通道 (自动清理挂起资源)...', false);
-        try { window.stop(); } catch (e) {}
+        showToast('⚡ 官方响应较慢，已启动第 1 级通道 (自动清理挂起遮罩)...', false);
         removeBlockingOverlays(false);
         checkAndScrapeResults();
       }
@@ -993,7 +992,6 @@
       // Stage 3: T=15s - 自动第2级解卡（穿透死锁遮罩 & 强行重扫）
       if (queryWatchdogSeconds === 15) {
         showToast('🛡️ 正在执行第 2 级主动解卡 (穿透死锁遮罩并重新探测数据)...', false);
-        try { window.stop(); } catch (e) {}
         removeBlockingOverlays(true);
         checkAndScrapeResults();
       }
@@ -1020,7 +1018,6 @@
   }
 
   function forceUnfreezeAndHeal() {
-    try { window.stop(); } catch (e) {}
     removeBlockingOverlays(true);
     stopQueryWatchdog();
     isAwaitingQueryResult = false;
@@ -1146,13 +1143,6 @@
 
     // 确保悬浮窗在结果页也能正常渲染显示
     ensureFloatingUIExists();
-
-    // 如果已进入结果页，终止后续多余的网络阻塞
-    if (isSummaryPage || hasSummaryKeywords) {
-      try {
-        window.stop();
-      } catch (e) {}
-    }
 
     // 1. 检查是否有官方错误弹窗 / 报错区域
     const errorDialog = document.querySelector('.ui-dialog, .t-Alert--error, div[role="dialog"]');
@@ -1288,6 +1278,26 @@
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ [LAST_RESULT_KEY]: res });
     }
+
+    let req = activeQueryData;
+    if (!req) {
+      try {
+        const cached = sessionStorage.getItem('ppo_active_query_req');
+        if (cached) req = JSON.parse(cached);
+      } catch (e) {}
+    }
+    const letters = [req?.letter1, req?.letter2, req?.letter3].filter(Boolean).join(' ');
+    const platenum = req?.platenum || '';
+    const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
+
+    // 触发右上角插件角标 (Badge) 与系统桌面通知
+    try {
+      chrome.runtime.sendMessage({
+        action: 'notify_query_result',
+        data: res,
+        plate: fullPlate
+      });
+    } catch (e) {}
 
     const pageSnapshot = (document.body ? document.body.innerText || '' : '').slice(0, 3000);
     saveQueryHistoryRecord('has_fine', res, pageSnapshot);

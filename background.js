@@ -18,17 +18,56 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 2. 监听标签页 URL 变化：一旦检测到进入 traffic-fines-summary 结果页，立即执行 window.stop() 截停转圈并强行提取
+// 2. 监听来自 content.js 的直接通知触发请求
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'notify_query_result') {
+    handleShowResultNotification(message.data, message.plate);
+    if (sendResponse) sendResponse({ success: true });
+    return true;
+  }
+});
+
+// 点击桌面通知直接打开历史记录大窗口
+chrome.notifications?.onClicked?.addListener((notifId) => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('history.html') });
+});
+
+function handleShowResultNotification(scraped, fullPlate) {
+  if (!scraped) return;
+  const count = parseInt(scraped.violationCount, 10) || 0;
+  const totalFine = scraped.totalFine || '0 جنيه';
+
+  // 1. 设置浏览器右上角插件图标角标 (Badge)
+  try {
+    chrome.action.setBadgeText({ text: count > 0 ? String(count) : '0' });
+    chrome.action.setBadgeBackgroundColor({ color: count > 0 ? '#ef4444' : '#10b981' });
+    chrome.action.setTitle({
+      title: `PPO 最新查询结果: ${totalFine} (${count} 笔违章) - 车牌: ${fullPlate || '埃及车辆'}`
+    });
+  } catch (e) {}
+
+  // 2. 弹出系统级桌面通知 (右上角即时弹出)
+  try {
+    if (chrome.notifications) {
+      chrome.notifications.create('ppo_res_' + Date.now(), {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: count > 0 ? `🚗 查到违章：总罚款 ${totalFine}` : `✅ 无违章记录：总罚款 0 镑`,
+        message: `车牌: ${fullPlate || '埃及车辆'} | 违章笔数: ${count} 笔\n点击立即查看完整明细与历史档案 ↗`,
+        priority: 2,
+        requireInteraction: false
+      });
+    }
+  } catch (e) {}
+}
+
+// 3. 监听标签页 URL 变化：智能抓取结果页数据并触发角标与通知
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const currentUrl = changeInfo.url || tab.url || '';
   if (currentUrl.includes('traffic-fines-summary') || currentUrl.includes('traffic?clear=201')) {
     chrome.scripting.executeScript({
       target: { tabId: tabId },
       func: () => {
-        try {
-          window.stop(); // 立即停止浏览器标签转圈
-        } catch (e) {}
-
         // 提取页面卡片结果
         const pageText = document.body ? document.body.innerText || '' : '';
         let totalFine = '';
@@ -110,6 +149,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           const letters = [req.letter1, req.letter2, req.letter3].filter(Boolean).join(' ');
           const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
           const passportNo = req.passportNo || req.nationalId || '';
+
+          // 触发角标与右上角通知
+          handleShowResultNotification(scraped, fullPlate);
 
           const historyList = store.ppo_traffic_history_v1 || [];
           const now = Date.now();

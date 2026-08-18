@@ -683,10 +683,10 @@ function refillAndQueryRecord(rec) {
         if (btnRefill) btnRefill.textContent = '一键填表';
 
         if (resp && resp.success && resp.data) {
-          alert(`🎉 极速直连查询完成！\n\n• 车牌: ${req.fullPlate || '埃及车辆'}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 800}ms\n\n新查询结果已自动录入历史档案！`);
+          alert(`🎉 静默后台查询完成！\n\n• 车牌: ${req.fullPlate || '埃及车辆'}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 2500}ms\n\n新查询结果与毫秒级全流程执行日志已录入历史档案！点击「详情」可查看完整过程！`);
           loadHistoryData();
         } else {
-          alert(`⚠️ 直连遇到提示: ${resp?.error || '失败'}，将为您自动打开官方网页模式`);
+          alert(`⚠️ 静默查询提示: ${resp?.error || '失败'}，将为您自动打开官方前台网页模式`);
           dispatchQueryTaskToTab(queryPayload);
         }
       });
@@ -1081,11 +1081,11 @@ function renderProfilesManagerUI(list) {
             }, (resp) => {
               btn.textContent = '🚀 填表查询';
               if (resp && resp.success && resp.data) {
-                alert(`🎉 极速直连查询完成！\n\n• 配置: ${target.remark || ''}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 800}ms\n\n已自动保存至历史档案！`);
+                alert(`🎉 静默后台查询完成！\n\n• 配置: ${target.remark || ''}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 2500}ms\n\n已自动保存至历史档案，点击「详情」可查看完整毫秒级执行过程！`);
                 document.getElementById('profiles-modal-overlay')?.classList.remove('show');
                 loadHistoryData();
               } else {
-                alert(`⚠️ 直连遇到提示: ${resp?.error || '失败'}，将为您自动打开官方网页模式`);
+                alert(`⚠️ 静默查询提示: ${resp?.error || '失败'}，将为您自动打开官方前台网页模式`);
                 dispatchQueryTaskToTab(target);
               }
             });

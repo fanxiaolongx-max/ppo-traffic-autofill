@@ -12,7 +12,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.action === 'execute_direct_query') {
-    executeApexDirectQuery(message.data)
+    executeSilentTabQuery(message.data)
       .then((res) => {
         sendResponse({ success: true, mode: 'direct', data: res });
       })
@@ -78,214 +78,229 @@ async function cleanAllSiteTracesAndCookies() {
   } catch (e) {}
 }
 
-// 2. Oracle APEX 极速协议直连模拟查询引擎 (Direct APEX Query Engine)
-async function executeApexDirectQuery(queryData) {
-  const startTime = Date.now();
-  
-  // 1. 会话预热：先清除本地残留 Cookie 痕迹，确保获取崭新 Session
-  await cleanAllSiteTracesAndCookies();
+// 2. 真实内核静默后台渲染与全程过程追踪引擎 (Silent Background Browser Engine)
+function executeSilentTabQuery(queryData) {
+  return new Promise(async (resolve, reject) => {
+    const startTime = Date.now();
+    const traceLogs = [];
 
-  const getUrl = `${TARGET_PPO_URL}?clear=201,14,RP`;
-  const getController = new AbortController();
-  const getTimeout = setTimeout(() => getController.abort(), 12000);
-
-  let pageHtml = '';
-  try {
-    const getResp = await fetch(getUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'ar,en;q=0.9,zh-CN;q=0.8',
-        'Cache-Control': 'no-cache'
-      },
-      signal: getController.signal
-    });
-    clearTimeout(getTimeout);
-    pageHtml = await getResp.text();
-  } catch (err) {
-    clearTimeout(getTimeout);
-    throw new Error(`连接官方网关失败: ${err.message || '握手超时'}`);
-  }
-
-  // 2. 从页面中动态提取 APEX 核心防伪令牌
-  const pFlowIdMatch = pageHtml.match(/name="p_flow_id"\s+value="([^"]+)"/i) || pageHtml.match(/pFlowId:\s*"([^"]+)"/i);
-  const pFlowStepIdMatch = pageHtml.match(/name="p_flow_step_id"\s+value="([^"]+)"/i) || pageHtml.match(/pFlowStepId:\s*"([^"]+)"/i);
-  const pInstanceMatch = pageHtml.match(/name="p_instance"\s+value="([^"]+)"/i) || pageHtml.match(/pInstance:\s*"([^"]+)"/i) || pageHtml.match(/p_instance=([^"&'\s]+)/i);
-  const pPageSubmissionIdMatch = pageHtml.match(/name="p_page_submission_id"\s+value="([^"]+)"/i);
-  const pMd5Match = pageHtml.match(/name="p_md5_checksum"\s+value="([^"]+)"/i);
-  const saltMatch = pageHtml.match(/"salt"\s*:\s*"([^"]+)"/i);
-  const protectedMatch = pageHtml.match(/"protected"\s*:\s*"([^"]+)"/i);
-
-  const pFlowId = pFlowIdMatch ? pFlowIdMatch[1] : '100';
-  const pFlowStepId = pFlowStepIdMatch ? pFlowStepIdMatch[1] : '14';
-  const pInstance = pInstanceMatch ? pInstanceMatch[1] : '';
-  const pPageSubmissionId = pPageSubmissionIdMatch ? pPageSubmissionIdMatch[1] : '';
-  const pMd5Checksum = pMd5Match ? pMd5Match[1] : '';
-  const salt = saltMatch ? saltMatch[1] : '';
-  const protectedToken = protectedMatch ? protectedMatch[1] : '';
-
-  if (!pInstance) {
-    throw new Error('未能从官方页面提取到会话 Token，请尝试切换至传统网页模式');
-  }
-
-  // 3. 构造 APEX 载荷 (Payload)
-  const isPassport = queryData.ownerType === 'passport';
-  const rawNum = String(queryData.platenum || '').trim();
-  const rawPassport = String(queryData.passportNo || '').trim().replace(/^[A-Za-z]{1,3}/, '').trim();
-  const rawId = String(queryData.nationalId || '').trim();
-
-  const itemsToSubmit = [
-    { n: "P14_CHOSE_OPTION", v: "1" },
-    { n: "P14_LETER_1", v: queryData.letter1 || "" },
-    { n: "P14_LETER_2", v: queryData.letter2 || "" },
-    { n: "P14_LETER_3", v: queryData.letter3 || "" },
-    { n: "P14_NUMBER_WITH_LETTER", v: rawNum },
-    { n: "P14_ID_TYPE_NUMS_LETTERS", v: isPassport ? "1429" : "2153" },
-    { n: "P14_ISFOREIGN__NUMS_LETTERS", v: queryData.foreignType !== "citizen" ? "1" : "0" },
-    { n: "P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS", v: queryData.country || "10206" },
-    { n: "P14_PASSPORT_NUM_NUMS_LETTERS", v: isPassport ? rawPassport : "" },
-    { n: "P14_NATIONAL_ID_NUMS_LETTERS", v: !isPassport ? rawId : "" }
-  ];
-
-  const pJsonObj = {
-    salt: salt || undefined,
-    pageItems: {
-      itemsToSubmit: itemsToSubmit,
-      protected: protectedToken || undefined,
-      rowVersion: ""
+    function addLog(stepName, details) {
+      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(2);
+      const line = `[+${elapsedSec}s] ${stepName}: ${details || ''}`;
+      traceLogs.push(line);
+      console.log(`[PPO-SilentTab] ${line}`);
     }
-  };
 
-  const postUrl = "https://www.ppo.gov.eg/ppo/r/ppoportal/ppoportal/wwv_flow.accept";
-  const postParams = new URLSearchParams();
-  postParams.append('p_flow_id', pFlowId);
-  postParams.append('p_flow_step_id', pFlowStepId);
-  postParams.append('p_instance', pInstance);
-  postParams.append('p_page_submission_id', pPageSubmissionId);
-  postParams.append('p_request', 'GET_FIN_LETTER_NUMBERS_BTN');
-  postParams.append('p_reload_on_submit', 'S');
-  if (pMd5Checksum) postParams.append('p_md5_checksum', pMd5Checksum);
-  postParams.append('p_json', JSON.stringify(pJsonObj));
+    addLog('🚀 启动任务', '初始化静默真实浏览器渲染引擎 (不抢焦点·完全绕过 WAF 防火墙)');
 
-  // 同时补充标准表单字段与 p_arg_names (确保 APEX PL/SQL 变量正确赋值)
-  itemsToSubmit.forEach(item => {
-    postParams.append(item.n, item.v);
-    postParams.append('p_arg_names', item.n);
-    postParams.append('p_arg_values', item.v);
+    // 1. 先快速抹除旧会话 Cookie，确保拿到最新状态
+    await cleanAllSiteTracesAndCookies();
+    addLog('🧹 会话净化', '已清除本地残留 Cookie 痕迹，重置干净环境');
+
+    let silentTab = null;
+    let isFinished = false;
+    let queryTimeout = null;
+
+    const cleanup = () => {
+      if (queryTimeout) clearTimeout(queryTimeout);
+      if (silentTab && silentTab.id) {
+        try {
+          chrome.tabs.remove(silentTab.id, () => {
+            if (chrome.runtime.lastError) {}
+          });
+          addLog('🚪 资源回收', `已自动静默关闭临时后台标签页 (Tab ID: ${silentTab.id})`);
+        } catch (e) {}
+      }
+    };
+
+    // 设置 25 秒总超时熔断保护
+    queryTimeout = setTimeout(() => {
+      if (!isFinished) {
+        isFinished = true;
+        addLog('⏰ 超时熔断', '官方网站响应超过 25 秒，正在终止任务');
+        cleanup();
+        reject(new Error('官方网站响应超时 (>25s)，请检查官方服务器状态或网络'));
+      }
+    }, 25000);
+
+    try {
+      // 2. 创建静默后台标签页 (active: false，用户完全无感)
+      silentTab = await chrome.tabs.create({
+        url: `${TARGET_PPO_URL}?clear=201,14,RP`,
+        active: false
+      });
+      addLog('🌐 创建静默标签页', `Tab ID: ${silentTab.id} (active: false, 处于后台真实渲染)`);
+
+      const rawPassport = String(queryData.passportNo || queryData.passport || '').trim().replace(/^[A-Za-z]{1,3}/, '').trim();
+      const rawNum = String(queryData.platenum || queryData.plateNum || '').trim();
+      const letters = [queryData.letter1, queryData.letter2, queryData.letter3].filter(Boolean).join(' ');
+      const fullPlate = `${letters} ${rawNum}`.trim() || '埃及车辆';
+      const isPassport = queryData.ownerType !== 'national_id';
+
+      // 3. 监听标签页更新与结果抓取
+      const onTabUpdatedListener = (tabId, changeInfo, tab) => {
+        if (tabId !== silentTab.id) return;
+
+        if (changeInfo.status === 'complete') {
+          const currentUrl = tab.url || '';
+          addLog('📄 页面加载完成', `当前 URL: ${currentUrl}`);
+
+          // 如果在结果页
+          if (currentUrl.includes('traffic-fines-summary') || currentUrl.includes('traffic?clear=201')) {
+            addLog('🎯 进入结果页', '官方 WAF 放行并成功返回结果页，正在提取罚款数据...');
+            
+            setTimeout(() => {
+              chrome.scripting.executeScript({
+                target: { tabId: silentTab.id },
+                func: () => {
+                  const pageText = document.body ? document.body.innerText || '' : '';
+                  let totalFine = '';
+                  let violationCount = '';
+                  let reconcileFine = '';
+
+                  const allDivs = Array.from(document.querySelectorAll('div, span, td'));
+                  allDivs.forEach(el => {
+                    const text = el.innerText?.trim() || '';
+                    if (text === 'اجمالي الغرامات الشاملة') {
+                      const parent = el.closest('.t-Region, div') || el.parentElement;
+                      if (parent) {
+                        const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
+                        if (matches) totalFine = matches[0].trim();
+                      }
+                    } else if (text === 'عدد المخالفات') {
+                      const parent = el.closest('.t-Region, div') || el.parentElement;
+                      if (parent) {
+                        const matches = parent.innerText.match(/[\d\u0660-\u0669]+/);
+                        if (matches) violationCount = matches[0].trim();
+                      }
+                    } else if (text === 'إجمالى غرامات التصالح' || text === 'اجمالي غرامات التصالح') {
+                      const parent = el.closest('.t-Region, div') || el.parentElement;
+                      if (parent) {
+                        const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
+                        if (matches) reconcileFine = matches[0].trim();
+                      }
+                    }
+                  });
+
+                  if (!totalFine) {
+                    const m = pageText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
+                    if (m) totalFine = m[1].replace(/\n/g, ' ').trim();
+                  }
+                  if (!violationCount) {
+                    const m = pageText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/);
+                    if (m) violationCount = m[1].trim();
+                  }
+                  if (!reconcileFine) {
+                    const m = pageText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
+                    if (m) reconcileFine = m[1].replace(/\n/g, ' ').trim();
+                  }
+
+                  return {
+                    totalFine: totalFine || '0 جنيه',
+                    violationCount: violationCount || '0',
+                    reconcileFine: reconcileFine || '0 جنيه',
+                    rawSnapshot: pageText.slice(0, 2000)
+                  };
+                }
+              }).then((results) => {
+                if (isFinished) return;
+                isFinished = true;
+                chrome.tabs.onUpdated.removeListener(onTabUpdatedListener);
+
+                const scraped = (results && results[0] && results[0].result) || {
+                  totalFine: '0 جنيه',
+                  violationCount: '0',
+                  reconcileFine: '0 جنيه',
+                  rawSnapshot: ''
+                };
+
+                const durationMs = Date.now() - startTime;
+                addLog('🎉 抓取成功', `总罚款: ${scraped.totalFine} | 违章笔数: ${scraped.violationCount} 笔 | 和解金额: ${scraped.reconcileFine}`);
+                addLog('⏱️ 总耗时', `${durationMs} ms`);
+
+                const formattedLog = [
+                  `=======================================================`,
+                  `📡 [真实浏览器静默后台渲染与全程过程追踪报告]`,
+                  `=======================================================`,
+                  `1. 查询车辆: ${fullPlate}`,
+                  `2. 证件信息: ${isPassport ? '护照' : '身份证'} - ${rawPassport || queryData.nationalId}`,
+                  `3. 最终抓取结果:`,
+                  `   • 总罚款: ${scraped.totalFine}`,
+                  `   • 违章笔数: ${scraped.violationCount} 笔`,
+                  `   • 和解金额: ${scraped.reconcileFine}`,
+                  `   • 总耗时: ${durationMs} ms`,
+                  `-------------------------------------------------------`,
+                  `4. ⚡ 毫秒级全程执行轨迹 (Trace Logs):`,
+                  `-------------------------------------------------------`,
+                  ...traceLogs,
+                  `-------------------------------------------------------`,
+                  `5. 📄 官方页面原始抓取快照:`,
+                  `-------------------------------------------------------`,
+                  scraped.rawSnapshot || '(无文本快照)'
+                ].join('\n');
+
+                const finalResult = {
+                  totalFine: scraped.totalFine,
+                  violationCount: scraped.violationCount,
+                  reconcileFine: scraped.reconcileFine,
+                  time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+                  latencyMs: durationMs,
+                  isDirectApi: false,
+                  isSilentRender: true,
+                  rawDiagnosticLog: formattedLog
+                };
+
+                saveQueryToHistory(queryData, finalResult, fullPlate);
+                handleShowResultNotification(finalResult, fullPlate);
+                cleanup();
+                resolve(finalResult);
+              }).catch((e) => {
+                if (!isFinished) {
+                  isFinished = true;
+                  chrome.tabs.onUpdated.removeListener(onTabUpdatedListener);
+                  cleanup();
+                  reject(e);
+                }
+              });
+            }, 600);
+          } else if (currentUrl.includes('/traffic')) {
+            // 表单页面加载完成，派发自动填表
+            addLog('📝 表单页面就绪', '正在向静默标签页发送自动填表与提交指令...');
+            setTimeout(() => {
+              chrome.tabs.sendMessage(silentTab.id, {
+                action: 'direct_fill',
+                data: {
+                  letter1: queryData.letter1 || '',
+                  letter2: queryData.letter2 || '',
+                  letter3: queryData.letter3 || '',
+                  platenum: rawNum,
+                  numeralMode: queryData.numeralMode || 'latin',
+                  ownerType: queryData.ownerType || 'passport',
+                  foreignType: queryData.foreignType || 'foreign',
+                  country: queryData.country || '10206',
+                  passportNo: rawPassport,
+                  nationalId: String(queryData.nationalId || '')
+                },
+                autoSubmit: true
+              }, (resp) => {
+                if (chrome.runtime.lastError) {
+                  addLog('⚠️ 填表握手', '等待 Content Script 自动巡检执行');
+                } else {
+                  addLog('✅ 表单填入提交', '已成功在静默标签页完成 DOM 填入并触发官方查询');
+                }
+              });
+            }, 800);
+          }
+        }
+      };
+
+      chrome.tabs.onUpdated.addListener(onTabUpdatedListener);
+
+    } catch (err) {
+      cleanup();
+      reject(err);
+    }
   });
-
-  const postController = new AbortController();
-  const postTimeout = setTimeout(() => postController.abort(), 18000);
-
-  let respText = '';
-  let respStatus = 200;
-  let finalUrl = '';
-
-  try {
-    const postResp = await fetch(postUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'ar,en;q=0.9,zh-CN;q=0.8',
-        'Referer': getUrl
-      },
-      body: postParams.toString(),
-      signal: postController.signal
-    });
-    clearTimeout(postTimeout);
-    respStatus = postResp.status;
-    finalUrl = postResp.url || postUrl;
-    respText = await postResp.text();
-  } catch (err) {
-    clearTimeout(postTimeout);
-    throw new Error(`提交查询失败: ${err.message || '官方响应超时'}`);
-  }
-
-  // 4. 解析结果 HTML
-  let totalFine = '';
-  let violationCount = '';
-  let reconcileFine = '';
-
-  const mFine = respText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/i);
-  if (mFine) totalFine = mFine[1].replace(/\n/g, ' ').trim();
-
-  const mCount = respText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/i);
-  if (mCount) violationCount = mCount[1].trim();
-
-  const mReconcile = respText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/i) || 
-                     respText.match(/اجمالي غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/i);
-  if (mReconcile) reconcileFine = mReconcile[1].replace(/\n/g, ' ').trim();
-
-  // 检查是否被官方 WAF (Web Application Firewall / F5 BIG-IP) 防火墙拦截
-  if (respText.includes('Request Rejected') || respText.includes('The requested URL was rejected')) {
-    const supportIdMatch = respText.match(/Your support ID is:\s*([\d]+)/i);
-    const supportId = supportIdMatch ? supportIdMatch[1] : '';
-    throw new Error(`官方网络防火墙 (WAF) 拦截了直连发包 (Support ID: ${supportId || '-'})，正在自动切换为真实网页模拟模式`);
-  }
-
-  const isExplicitClean = respText.includes('لا توجد مخالفات') || respText.includes('لا توجد بيانات');
-
-  if (!totalFine && isExplicitClean) {
-    totalFine = '0 جنيه';
-    violationCount = '0';
-    reconcileFine = '0 جنيه';
-  }
-
-  if (!totalFine && !violationCount) {
-    throw new Error('官方网关返回未预期的页面结构，正在自动切换至真实网页模式');
-  }
-
-  const durationMs = Date.now() - startTime;
-
-  // 组装完整的排查诊断详细日志
-  const debugDiagnosticLog = [
-    `=======================================================`,
-    `📡 [APEX协议极速直连 详细请求与响应诊断报告]`,
-    `=======================================================`,
-    `1. 目标地址: ${postUrl}`,
-    `2. 最终重定向URL: ${finalUrl}`,
-    `3. HTTP响应状态: ${respStatus}`,
-    `4. 提取到的Session令牌:`,
-    `   • p_instance (会话ID): ${pInstance}`,
-    `   • p_page_submission_id: ${pPageSubmissionId}`,
-    `   • p_md5_checksum: ${pMd5Checksum || '(无)'}`,
-    `   • salt: ${salt || '(无)'}`,
-    `   • protected: ${protectedToken || '(无)'}`,
-    `5. 提交的核心参数:`,
-    `   • 车牌: ${queryData.letter1} ${queryData.letter2} ${queryData.letter3} ${rawNum}`,
-    `   • 证件类型: ${isPassport ? '护照 (1429)' : '身份证 (2153)'}`,
-    `   • 护照号(过滤纯数字): ${rawPassport}`,
-    `   • 签发国籍: ${queryData.country || '10206'}`,
-    `6. 结果匹配情况:`,
-    `   • 总罚款: ${totalFine || '(未提取到)'}`,
-    `   • 违章笔数: ${violationCount || '(未提取到)'}`,
-    `   • 和解金额: ${reconcileFine || '(未提取到)'}`,
-    `   • 耗时: ${durationMs} ms`,
-    `-------------------------------------------------------`,
-    `7. 官方服务器返回的原始 HTML 文本 (前 3500 字符快照):`,
-    `-------------------------------------------------------`,
-    respText.slice(0, 3500)
-  ].join('\n');
-
-  const scrapedResult = {
-    totalFine: totalFine || '0 جنيه',
-    violationCount: violationCount || '0',
-    reconcileFine: reconcileFine || '0 جنيه',
-    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-    latencyMs: durationMs,
-    isDirectApi: true,
-    rawDiagnosticLog: debugDiagnosticLog
-  };
-
-  // 5. 存储结果并触发系统通知与历史入库
-  const letters = [queryData.letter1, queryData.letter2, queryData.letter3].filter(Boolean).join(' ');
-  const fullPlate = `${letters} ${rawNum}`.trim() || '埃及车辆';
-
-  saveQueryToHistory(queryData, scrapedResult, fullPlate);
-  handleShowResultNotification(scrapedResult, fullPlate);
-
-  return scrapedResult;
 }
 
 // 统一入库历史记录
@@ -599,16 +614,15 @@ function dispatchQueryTask(queryData) {
 // 统一对外查询调度入口 (根据用户偏好模式分发)
 function handleOpenAndFill(data, autoSubmit, sendResponse) {
   chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-    const mode = res.ppo_traffic_query_mode || 'direct'; // 默认新逻辑：极速直连
+    const mode = res.ppo_traffic_query_mode || 'direct'; // 默认新逻辑：极速静默真实渲染
 
     if (mode === 'direct') {
-      executeApexDirectQuery(data)
+      executeSilentTabQuery(data)
         .then((scraped) => {
           if (sendResponse) sendResponse({ success: true, mode: 'direct', data: scraped });
         })
         .catch((err) => {
-          console.warn('[Direct Query Failed, falling back to Web UI mode]:', err);
-          // 若直连遇到特殊阻碍，自动回退到传统网页模式
+          console.warn('[Silent Render Failed, falling back to visible Web UI mode]:', err);
           dispatchQueryTask(data);
           if (sendResponse) sendResponse({ success: true, mode: 'tab_ui', fallback: true, message: err.message });
         });

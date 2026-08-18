@@ -91,9 +91,9 @@ function updateQueryModeUI(mode) {
   const submitBtn = document.getElementById('ppo-btn-fill-submit');
   if (submitBtn) {
     if (mode === 'direct') {
-      submitBtn.innerHTML = '<span>🚀 极速直连查询 (秒级出结果·不跳页)</span>';
+      submitBtn.innerHTML = '<span>🚀 极速静默查询 (秒级出结果·不跳页)</span>';
     } else {
-      submitBtn.innerHTML = '<span>🔍 打开网页查询 (填入并自动查询)</span>';
+      submitBtn.innerHTML = '<span>🔍 打开网页查询 (前台可视化填表)</span>';
     }
   }
 }
@@ -428,15 +428,15 @@ function handleTriggerAction(autoSubmit) {
 
   const data = getFormData();
 
-  // 如果启用了「🚀 极速协议直连模式」且需要自动查询
+  // 如果启用了「🚀 极速静默渲染模式」且需要自动查询
   if (autoSubmit && currentQueryMode === 'direct') {
     const submitBtn = document.getElementById('ppo-btn-fill-submit');
     const origHtml = submitBtn ? submitBtn.innerHTML : '';
     if (submitBtn) {
-      submitBtn.innerHTML = '<span>⏳ 正在极速直连官方数据库 (~0.8s)...</span>';
+      submitBtn.innerHTML = '<span>⏳ 正在真实内核静默渲染查询中...</span>';
       submitBtn.disabled = true;
     }
-    showToast('🚀 正在通过 APEX 协议极速直连官方数据库...');
+    showToast('🚀 正在后台静默真实渲染查询中 (不抢焦点)...');
 
     chrome.runtime.sendMessage({
       action: 'execute_direct_query',

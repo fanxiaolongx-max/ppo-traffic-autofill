@@ -8,7 +8,8 @@
     "tabs",
     "activeTab",
     "scripting",
-    "notifications"
+    "notifications",
+    "alarms"
   ],
   "host_permissions": [
     "*://www.ppo.gov.eg/*",

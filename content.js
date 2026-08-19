@@ -1586,10 +1586,11 @@
     const platenum = req?.platenum || '';
     const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
 
-    // 严格防重入：同一车辆+罚款数据在 30 秒内仅保存 1 条记录
+    // 严格防重入：针对报错设定 3 秒短防抖，针对普通结果设定 10 秒防抖
     const fp = `${fullPlate}_${resultObj.totalFine}_${resultObj.violationCount}_${status}`;
     const now = Date.now();
-    if (lastSavedRecordFingerprint === fp && (now - lastSavedRecordTimestamp < 30000)) {
+    const deDupWindow = status === 'error' ? 3000 : 10000;
+    if (lastSavedRecordFingerprint === fp && (now - lastSavedRecordTimestamp < deDupWindow)) {
       return;
     }
     lastSavedRecordFingerprint = fp;
@@ -1631,12 +1632,18 @@
       const now = Date.now();
       const historyList = store[HISTORY_STORAGE_KEY] || [];
 
-      // 防重机制 (15秒内相同车牌与结果不重复入库)
+      // 防重机制 (区分状态与合理时间窗口)
       const isRecentDup = historyList.slice(0, 3).some(r => {
         const rPlate = r.request?.fullPlate || '';
         const rFine = r.result?.totalFine || '';
         const rCount = r.result?.violationCount || '';
-        return (rPlate === fullPlate || !fullPlate) && rFine === resultObj?.totalFine && rCount === resultObj?.violationCount && (now - r.timestamp < 15000);
+        const rStatus = r.status || '';
+        const timeDiff = now - r.timestamp;
+
+        if (status === 'error') {
+          return rStatus === 'error' && rPlate === fullPlate && timeDiff < 3000;
+        }
+        return rStatus === status && (rPlate === fullPlate || !fullPlate) && rFine === resultObj?.totalFine && rCount === resultObj?.violationCount && timeDiff < 10000;
       });
 
       if (isRecentDup) {

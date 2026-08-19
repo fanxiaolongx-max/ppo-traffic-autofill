@@ -272,15 +272,9 @@ function bindEvents() {
   passportInput?.addEventListener('input', () => {
     updatePreview();
     saveLiveDraft();
-    const raw = passportInput.value.trim();
-    const cleaned = cleanPassportNumber(raw);
     const hintEl = document.getElementById('ppo-passport-hint');
     if (hintEl) {
-      if (/^[A-Za-z]/.test(raw)) {
-        hintEl.innerHTML = `💡 已检测到前缀字母，实际填表将自动提取为: <strong>${cleaned || '...'}</strong>`;
-      } else {
-        hintEl.innerHTML = `💡 提示：官方系统要求纯数字。若输入前缀字母（如 EA/E/G），将自动去除字母填入纯数字。`;
-      }
+      hintEl.innerHTML = `💡 提示：请输入完整护照号，查询时会自动尝试不同格式并记忆最优结果。`;
     }
   });
 

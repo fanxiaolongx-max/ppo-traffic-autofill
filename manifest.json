@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "default_locale": "zh_CN",
   "name": "__MSG_extName__",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "__MSG_extDesc__",
   "permissions": [
     "storage",
@@ -41,8 +41,13 @@
         "*://ppo.gov.eg/*",
         "*://*.ppo.gov.eg/*"
       ],
-      "js": ["utils.js", "content.js"],
-      "css": ["floating-ui.css"],
+      "js": [
+        "utils.js",
+        "content.js"
+      ],
+      "css": [
+        "floating-ui.css"
+      ],
       "run_at": "document_idle"
     }
   ]

@@ -2,6 +2,23 @@
 
 本文件包含了提交至 **Chrome Web Store** 与 **Microsoft Edge Add-ons** 时所需的完整中、英、阿三语文本资料。
 
+## Version 1.0.2 Release Notes
+
+### 简体中文
+```text
+修复护照字母前缀与数字格式在静默查询中的处理问题；改进小尺寸弹窗布局；增强历史数据导入与 CSV 导出安全性；加入查询任务去重、25 秒超时熔断和页面刷新恢复清理，避免重复提交或反复查询。
+```
+
+### English
+```text
+Fixed passport-prefix and numeral-format handling in silent queries, improved compact popup usability, hardened history import and CSV export, and added task deduplication, a 25-second circuit breaker, and stale-session cleanup to prevent repeated submissions or query loops.
+```
+
+### العربية
+```text
+إصلاح معالجة بادئة جواز السفر وتنسيق الأرقام في الاستعلام الصامت، وتحسين نافذة الإضافة، وتعزيز أمان الاستيراد وتصدير CSV، وإضافة منع تكرار المهام وحد زمني مدته 25 ثانية لمنع تكرار الإرسال أو الاستعلام المستمر.
+```
+
 ---
 
 ## 🇨🇳 简体中文 (Chinese Simplified)

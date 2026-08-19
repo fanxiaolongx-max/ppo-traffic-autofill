@@ -14,6 +14,24 @@ let activeSearchQuery = '';
 let currentViewMode = 'table'; // 'table' | 'cards'
 let currentDetailRecord = null;
 
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;'
+  })[char]);
+}
+
+function asText(value, fallback = '') {
+  return value === undefined || value === null ? fallback : String(value);
+}
+
+function asObjectList(value) {
+  return Array.isArray(value) ? value.filter(item => item && typeof item === 'object') : [];
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initDOM();
   bindEvents();
@@ -231,7 +249,7 @@ function loadHistoryFromStorage() {
       'ppo_traffic_profiles_v2',
       'ppo_traffic_last_active_id'
     ], (res) => {
-      allRecords = res[HISTORY_STORAGE_KEY] || [];
+      allRecords = asObjectList(res[HISTORY_STORAGE_KEY]);
 
       // 智能自愈回填机制：若历史记录为空，但本地已成功抓取到违章结果，自动回填恢复！
       if (allRecords.length === 0 && res.ppo_traffic_last_result && res.ppo_traffic_last_result.totalFine) {
@@ -292,7 +310,7 @@ function listenStorageChanges() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes[HISTORY_STORAGE_KEY]) {
-        allRecords = changes[HISTORY_STORAGE_KEY].newValue || [];
+        allRecords = asObjectList(changes[HISTORY_STORAGE_KEY].newValue);
         updateDashboardStats();
         applyFiltersAndRender();
       }
@@ -313,16 +331,16 @@ function updateDashboardStats() {
 
   allRecords.forEach(rec => {
     // 提取数字并累加
-    const fineText = rec.result?.totalFine || '';
+    const fineText = asText(rec.result?.totalFine);
     const numericFine = parseFloat(fineText.replace(/[^\d.]/g, '')) || 0;
     totalFinesSum += numericFine;
 
-    const countText = rec.result?.violationCount || '0';
+    const countText = asText(rec.result?.violationCount, '0');
     const numericCount = parseInt(countText.replace(/[^\d]/g, ''), 10) || 0;
     totalViolationsCount += numericCount;
 
     // 统计车牌
-    const plateStr = rec.request?.fullPlate || `${rec.request?.letter1 || ''}${rec.request?.letter2 || ''}${rec.request?.letter3 || ''}_${rec.request?.platenum || ''}`;
+    const plateStr = asText(rec.request?.fullPlate || `${rec.request?.letter1 || ''}${rec.request?.letter2 || ''}${rec.request?.letter3 || ''}_${rec.request?.platenum || ''}`);
     if (plateStr) uniquePlatesSet.add(plateStr.trim());
 
     // 状态分类统计
@@ -352,8 +370,8 @@ function updateDashboardStats() {
 function applyFiltersAndRender() {
   filteredRecords = allRecords.filter(rec => {
     // 1. 状态过滤
-    const vCount = parseInt((rec.result?.violationCount || '0').replace(/[^\d]/g, ''), 10) || 0;
-    const fineNum = parseFloat((rec.result?.totalFine || '0').replace(/[^\d.]/g, '')) || 0;
+    const vCount = parseInt(asText(rec.result?.violationCount, '0').replace(/[^\d]/g, ''), 10) || 0;
+    const fineNum = parseFloat(asText(rec.result?.totalFine, '0').replace(/[^\d.]/g, '')) || 0;
 
     if (activeStatusFilter === 'has_fine') {
       if (rec.status === 'error' || (vCount === 0 && fineNum === 0)) return false;
@@ -366,16 +384,16 @@ function applyFiltersAndRender() {
     // 2. 搜索框过滤
     if (activeSearchQuery) {
       const q = activeSearchQuery.toLowerCase();
-      const matchPlate = (rec.request?.fullPlate || '').toLowerCase().includes(q) ||
-                         (rec.request?.platenum || '').toLowerCase().includes(q) ||
-                         (rec.request?.letter1 || '').includes(q) ||
-                         (rec.request?.letter2 || '').includes(q) ||
-                         (rec.request?.letter3 || '').includes(q);
-      const matchPassport = (rec.request?.passportNo || '').toLowerCase().includes(q) ||
-                            (rec.request?.nationalId || '').toLowerCase().includes(q);
-      const matchCountry = (rec.request?.countryName || '').toLowerCase().includes(q);
-      const matchDate = (rec.dateTime || '').toLowerCase().includes(q);
-      const matchResult = (rec.result?.totalFine || '').toLowerCase().includes(q);
+      const matchPlate = asText(rec.request?.fullPlate).toLowerCase().includes(q) ||
+                         asText(rec.request?.platenum).toLowerCase().includes(q) ||
+                         asText(rec.request?.letter1).includes(q) ||
+                         asText(rec.request?.letter2).includes(q) ||
+                         asText(rec.request?.letter3).includes(q);
+      const matchPassport = asText(rec.request?.passportNo).toLowerCase().includes(q) ||
+                            asText(rec.request?.nationalId).toLowerCase().includes(q);
+      const matchCountry = asText(rec.request?.countryName).toLowerCase().includes(q);
+      const matchDate = asText(rec.dateTime).toLowerCase().includes(q);
+      const matchResult = asText(rec.result?.totalFine).toLowerCase().includes(q);
 
       if (!matchPlate && !matchPassport && !matchCountry && !matchDate && !matchResult) {
         return false;
@@ -392,16 +410,16 @@ function applyFiltersAndRender() {
     } else if (activeSortOption === 'time_asc') {
       return (a.timestamp || 0) - (b.timestamp || 0);
     } else if (activeSortOption === 'fine_desc') {
-      const fA = parseFloat((a.result?.totalFine || '0').replace(/[^\d.]/g, '')) || 0;
-      const fB = parseFloat((b.result?.totalFine || '0').replace(/[^\d.]/g, '')) || 0;
+      const fA = parseFloat(asText(a.result?.totalFine, '0').replace(/[^\d.]/g, '')) || 0;
+      const fB = parseFloat(asText(b.result?.totalFine, '0').replace(/[^\d.]/g, '')) || 0;
       return fB - fA;
     } else if (activeSortOption === 'fine_asc') {
-      const fA = parseFloat((a.result?.totalFine || '0').replace(/[^\d.]/g, '')) || 0;
-      const fB = parseFloat((b.result?.totalFine || '0').replace(/[^\d.]/g, '')) || 0;
+      const fA = parseFloat(asText(a.result?.totalFine, '0').replace(/[^\d.]/g, '')) || 0;
+      const fB = parseFloat(asText(b.result?.totalFine, '0').replace(/[^\d.]/g, '')) || 0;
       return fA - fB;
     } else if (activeSortOption === 'count_desc') {
-      const cA = parseInt((a.result?.violationCount || '0').replace(/[^\d]/g, ''), 10) || 0;
-      const cB = parseInt((b.result?.violationCount || '0').replace(/[^\d]/g, ''), 10) || 0;
+      const cA = parseInt(asText(a.result?.violationCount, '0').replace(/[^\d]/g, ''), 10) || 0;
+      const cB = parseInt(asText(b.result?.violationCount, '0').replace(/[^\d]/g, ''), 10) || 0;
       return cB - cA;
     }
     return 0;
@@ -444,12 +462,13 @@ function renderTableView() {
   if (!tbody) return;
 
   tbody.innerHTML = filteredRecords.map(rec => {
-    const letters = [rec.request?.letter1, rec.request?.letter2, rec.request?.letter3].filter(Boolean).join(' ') || '-';
-    const num = rec.request?.platenum || '-';
-    const fineText = rec.result?.totalFine || '0 جنيه';
+    const recordId = escapeHTML(rec.id || '');
+    const letters = escapeHTML([rec.request?.letter1, rec.request?.letter2, rec.request?.letter3].filter(Boolean).join(' ') || '-');
+    const num = escapeHTML(rec.request?.platenum || '-');
+    const fineText = asText(rec.result?.totalFine, '0 جنيه');
     const numericFine = parseFloat(fineText.replace(/[^\d.]/g, '')) || 0;
-    const vCount = rec.result?.violationCount || '0';
-    const reconcileText = rec.result?.reconcileFine || '0 جنيه';
+    const vCount = asText(rec.result?.violationCount, '0');
+    const reconcileText = asText(rec.result?.reconcileFine, '0 جنيه');
     
     let statusHtml = '';
     if (rec.status === 'error') {
@@ -469,15 +488,19 @@ function renderTableView() {
         : `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">🔢纯数字</span>`;
     }
 
-    const idLabel = rec.request?.ownerType === 'passport' 
-      ? `护照: ${rec.request?.passportNo || '-'} ${passFormatBadge}` 
-      : `埃及ID: ${rec.request?.nationalId || '-'}`;
-    const countryLabel = rec.request?.countryName || (rec.request?.country === '10206' ? '中国' : rec.request?.country || '');
+    const idLabel = rec.request?.ownerType === 'passport'
+      ? `护照: ${escapeHTML(rec.request?.passportNo || '-')} ${passFormatBadge}`
+      : `埃及ID: ${escapeHTML(rec.request?.nationalId || '-')}`;
+    const countryLabel = escapeHTML(rec.request?.countryName || (rec.request?.country === '10206' ? '中国' : rec.request?.country || ''));
+    const dateLabel = escapeHTML(rec.dateTime || new Date(rec.timestamp).toLocaleString());
+    const safeFineText = escapeHTML(fineText);
+    const safeVCount = escapeHTML(vCount);
+    const safeReconcileText = escapeHTML(reconcileText);
 
     return `
-      <tr data-id="${rec.id}">
+      <tr data-id="${recordId}">
         <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-sub);">
-          ${rec.dateTime || new Date(rec.timestamp).toLocaleString()}
+          ${dateLabel}
         </td>
         <td>
           <div class="plate-badge-cell">
@@ -492,22 +515,22 @@ function renderTableView() {
           </div>
         </td>
         <td style="text-align: center; font-weight: 700; color: ${parseInt(vCount, 10) > 0 ? '#f87171' : 'var(--text-muted)'};">
-          ${vCount} 笔
+          ${safeVCount} 笔
         </td>
         <td class="fine-amount ${numericFine > 0 ? 'has-fine' : 'zero'}">
-          ${fineText}
+          ${safeFineText}
         </td>
         <td class="fine-amount" style="color: ${parseFloat(reconcileText) > 0 ? '#34d399' : 'var(--text-muted)'};">
-          ${reconcileText}
+          ${safeReconcileText}
         </td>
         <td style="text-align: center;">
           ${statusHtml}
         </td>
         <td>
           <div class="action-buttons">
-            <button type="button" class="btn-table-action btn-inspect" data-id="${rec.id}" title="查看详细请求与抓取快照">详情</button>
-            <button type="button" class="btn-table-action btn-table-fill btn-refill" data-id="${rec.id}" title="一键将该车辆数据填入官网并查询">填表</button>
-            <button type="button" class="btn-table-action btn-table-del btn-del" data-id="${rec.id}" title="删除此条记录">✕</button>
+            <button type="button" class="btn-table-action btn-inspect" data-id="${recordId}" title="查看详细请求与抓取快照">详情</button>
+            <button type="button" class="btn-table-action btn-table-fill btn-refill" data-id="${recordId}" title="一键将该车辆数据填入官网并查询">填表</button>
+            <button type="button" class="btn-table-action btn-table-del btn-del" data-id="${recordId}" title="删除此条记录">✕</button>
           </div>
         </td>
       </tr>
@@ -522,12 +545,13 @@ function renderCardsView() {
   if (!container) return;
 
   container.innerHTML = filteredRecords.map(rec => {
-    const letters = [rec.request?.letter1, rec.request?.letter2, rec.request?.letter3].filter(Boolean).join(' ') || '-';
-    const num = rec.request?.platenum || '-';
-    const fineText = rec.result?.totalFine || '0 جنيه';
+    const recordId = escapeHTML(rec.id || '');
+    const letters = escapeHTML([rec.request?.letter1, rec.request?.letter2, rec.request?.letter3].filter(Boolean).join(' ') || '-');
+    const num = escapeHTML(rec.request?.platenum || '-');
+    const fineText = asText(rec.result?.totalFine, '0 جنيه');
     const numericFine = parseFloat(fineText.replace(/[^\d.]/g, '')) || 0;
-    const vCount = rec.result?.violationCount || '0';
-    const reconcileText = rec.result?.reconcileFine || '0 جنيه';
+    const vCount = asText(rec.result?.violationCount, '0');
+    const reconcileText = asText(rec.result?.reconcileFine, '0 جنيه');
 
     let statusHtml = '';
     if (rec.status === 'error') {
@@ -547,14 +571,19 @@ function renderCardsView() {
         : `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">🔢纯数字</span>`;
     }
 
-    const idLabel = rec.request?.ownerType === 'passport' 
-      ? `护照: ${rec.request?.passportNo || '-'} ${passFormatBadge}` 
-      : `ID: ${rec.request?.nationalId || '-'}`;
+    const idLabel = rec.request?.ownerType === 'passport'
+      ? `护照: ${escapeHTML(rec.request?.passportNo || '-')} ${passFormatBadge}`
+      : `ID: ${escapeHTML(rec.request?.nationalId || '-')}`;
+    const dateLabel = escapeHTML(rec.dateTime || new Date(rec.timestamp).toLocaleString());
+    const countryLabel = escapeHTML(rec.request?.countryName || '');
+    const safeFineText = escapeHTML(fineText);
+    const safeVCount = escapeHTML(vCount);
+    const safeReconcileText = escapeHTML(reconcileText);
 
     return `
-      <div class="history-card ${numericFine > 0 ? 'has-fine' : ''}" data-id="${rec.id}">
+      <div class="history-card ${numericFine > 0 ? 'has-fine' : ''}" data-id="${recordId}">
         <div class="history-card-header">
-          <span class="card-time">${rec.dateTime || new Date(rec.timestamp).toLocaleString()}</span>
+          <span class="card-time">${dateLabel}</span>
           ${statusHtml}
         </div>
 
@@ -563,7 +592,7 @@ function renderCardsView() {
             <span class="arabic-letters-tag">${letters}</span>
             <span class="plate-num-tag">${num}</span>
           </div>
-          <span style="font-size: 12px; color: var(--text-muted);">${rec.request?.countryName || ''}</span>
+          <span style="font-size: 12px; color: var(--text-muted);">${countryLabel}</span>
         </div>
 
         <div style="font-size: 12px; color: var(--text-sub); font-family: 'JetBrains Mono', monospace;">
@@ -574,21 +603,21 @@ function renderCardsView() {
           <div>
             <div style="font-size: 11px; color: var(--text-muted);">总罚款金额</div>
             <div style="font-size: 16px; font-weight: 700; color: ${numericFine > 0 ? '#fde047' : 'var(--text-muted)'}; font-family: 'JetBrains Mono';">
-              ${fineText}
+              ${safeFineText}
             </div>
           </div>
           <div style="text-align: right;">
             <div style="font-size: 11px; color: var(--text-muted);">违章笔数 / 和解</div>
             <div style="font-size: 13px; font-weight: 600; color: #cbd5e1;">
-              ${vCount} 笔 (${reconcileText})
+              ${safeVCount} 笔 (${safeReconcileText})
             </div>
           </div>
         </div>
 
         <div class="card-footer-actions">
-          <button type="button" class="btn-table-action btn-inspect" data-id="${rec.id}">查看详情</button>
-          <button type="button" class="btn-table-action btn-table-fill btn-refill" data-id="${rec.id}">一键填表</button>
-          <button type="button" class="btn-table-action btn-table-del btn-del" data-id="${rec.id}">删除</button>
+          <button type="button" class="btn-table-action btn-inspect" data-id="${recordId}">查看详情</button>
+          <button type="button" class="btn-table-action btn-table-fill btn-refill" data-id="${recordId}">一键填表</button>
+          <button type="button" class="btn-table-action btn-table-del btn-del" data-id="${recordId}">删除</button>
         </div>
       </div>
     `;
@@ -603,7 +632,7 @@ function bindItemActions(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const id = btn.dataset.id;
-      const rec = allRecords.find(r => r.id === id);
+      const rec = allRecords.find(r => String(r.id) === id);
       if (rec) openDetailModal(rec);
     });
   });
@@ -613,7 +642,7 @@ function bindItemActions(container) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const id = btn.dataset.id;
-      const rec = allRecords.find(r => r.id === id);
+      const rec = allRecords.find(r => String(r.id) === id);
       if (rec) refillAndQueryRecord(rec);
     });
   });
@@ -691,7 +720,8 @@ function refillAndQueryRecord(rec) {
     const mode = res.ppo_traffic_query_mode || 'tab_ui'; // 默认网页前台模式
 
     if (mode === 'direct') {
-      const btnRefill = document.querySelector(`.btn-refill[data-id="${rec.id}"]`);
+      const btnRefill = Array.from(document.querySelectorAll('.btn-refill'))
+        .find(btn => btn.dataset.id === String(rec.id));
       if (btnRefill) btnRefill.textContent = '⏳ 查询中...';
 
       chrome.runtime.sendMessage({
@@ -725,7 +755,7 @@ function dispatchQueryTaskToTab(data) {
 // 删除单条记录
 function deleteSingleRecord(id) {
   if (!id) return;
-  allRecords = allRecords.filter(r => r.id !== id);
+  allRecords = allRecords.filter(r => String(r.id) !== String(id));
   chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: allRecords }, () => {
     updateDashboardStats();
     applyFiltersAndRender();
@@ -806,9 +836,9 @@ function handleImportFullBackup(e) {
       if (Array.isArray(backup)) {
         importedProfiles = backup;
       } else if (backup.profiles || backup.history || backup.serverProbes) {
-        importedProfiles = backup.profiles || [];
-        importedHistory = backup.history || [];
-        importedProbes = backup.serverProbes || [];
+        importedProfiles = Array.isArray(backup.profiles) ? backup.profiles : [];
+        importedHistory = Array.isArray(backup.history) ? backup.history : [];
+        importedProbes = Array.isArray(backup.serverProbes) ? backup.serverProbes : [];
       } else {
         alert('⚠️ 无法识别的备份文件格式！请确认选择的是正确的 PPO 备份 JSON 文件。');
         return;
@@ -928,23 +958,28 @@ function exportAsCSV() {
     return;
   }
 
+  const csvCell = value => {
+    let text = String(value ?? '');
+    if (/^[=+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
   const headers = ['记录ID', '查询时间', '车牌字母', '车牌数字', '完整车牌', '证件类型', '护照/证件号', '国籍', '违章笔数', '总罚款金额', '和解金额', '查询状态'];
   const rows = allRecords.map(r => [
-    `"${r.id || ''}"`,
-    `"${r.dateTime || ''}"`,
-    `"${[r.request?.letter1, r.request?.letter2, r.request?.letter3].filter(Boolean).join(' ')}"`,
-    `"${r.request?.platenum || ''}"`,
-    `"${r.request?.fullPlate || ''}"`,
-    `"${r.request?.ownerType || ''}"`,
-    `"${r.request?.passportNo || r.request?.nationalId || ''}"`,
-    `"${r.request?.countryName || r.request?.country || ''}"`,
-    `"${r.result?.violationCount || '0'}"`,
-    `"${r.result?.totalFine || '0'}"`,
-    `"${r.result?.reconcileFine || '0'}"`,
-    `"${r.status || 'success'}"`
+    r.id || '',
+    r.dateTime || '',
+    [r.request?.letter1, r.request?.letter2, r.request?.letter3].filter(Boolean).join(' '),
+    r.request?.platenum || '',
+    r.request?.fullPlate || '',
+    r.request?.ownerType || '',
+    r.request?.passportNo || r.request?.nationalId || '',
+    r.request?.countryName || r.request?.country || '',
+    r.result?.violationCount || '0',
+    r.result?.totalFine || '0',
+    r.result?.reconcileFine || '0',
+    r.status || 'success'
   ]);
 
-  const csvContent = "\uFEFF" + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+  const csvContent = "\uFEFF" + [headers.map(csvCell).join(','), ...rows.map(row => row.map(csvCell).join(','))].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const downloadAnchor = document.createElement('a');
@@ -1022,6 +1057,7 @@ function loadAndRenderProfilesManager() {
 }
 
 function renderProfilesManagerUI(list) {
+  list = asObjectList(list);
   const countEl = document.getElementById('profiles-mgr-count');
   const listEl = document.getElementById('profiles-mgr-list');
   if (countEl) countEl.textContent = list.length;
@@ -1037,9 +1073,11 @@ function renderProfilesManagerUI(list) {
   }
 
   listEl.innerHTML = list.map(item => {
-    const letters = [item.letter1, item.letter2, item.letter3].filter(Boolean).join(' ') || '-';
-    const num = item.platenum || '-';
-    const idVal = item.passportNo || item.nationalId || '未填证件';
+    const itemId = escapeHTML(item.id || '');
+    const letters = escapeHTML([item.letter1, item.letter2, item.letter3].filter(Boolean).join(' ') || '-');
+    const num = escapeHTML(item.platenum || '-');
+    const idVal = escapeHTML(item.passportNo || item.nationalId || '未填证件');
+    const remark = escapeHTML(item.remark || '未命名配置');
     const isPassport = item.ownerType !== 'national_id';
     const isRaw = item.passportFormat === 'raw' || /^[A-Za-z]/.test(item.passportNo || '');
     const formatBadge = isPassport 
@@ -1053,7 +1091,7 @@ function renderProfilesManagerUI(list) {
         <div style="display: flex; align-items: center; gap: 12px;">
           <span style="font-size: 20px;">👤</span>
           <div>
-            <div style="font-weight: 700; color: #fff; font-size: 14px;">${item.remark || '未命名配置'}</div>
+            <div style="font-weight: 700; color: #fff; font-size: 14px;">${remark}</div>
             <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
               车牌: <strong style="color: var(--primary-gold);">${letters} ${num}</strong> · 
               ${isPassport ? '护照' : '身份证'}: <span>${idVal}</span> ${formatBadge}
@@ -1061,8 +1099,8 @@ function renderProfilesManagerUI(list) {
           </div>
         </div>
         <div style="display: flex; gap: 8px;">
-          <button type="button" class="btn btn-primary btn-mgr-fill" data-id="${item.id}" style="padding: 4px 10px; font-size: 12px;">🚀 填表查询</button>
-          <button type="button" class="btn btn-danger-outline btn-mgr-del" data-id="${item.id}" style="padding: 4px 10px; font-size: 12px;">🗑️ 删除</button>
+          <button type="button" class="btn btn-primary btn-mgr-fill" data-id="${itemId}" style="padding: 4px 10px; font-size: 12px;">🚀 填表查询</button>
+          <button type="button" class="btn btn-danger-outline btn-mgr-del" data-id="${itemId}" style="padding: 4px 10px; font-size: 12px;">🗑️ 删除</button>
         </div>
       </div>
     `;
@@ -1072,7 +1110,7 @@ function renderProfilesManagerUI(list) {
   listEl.querySelectorAll('.btn-mgr-fill').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
-      const target = list.find(p => p.id === id);
+      const target = list.find(p => String(p.id) === id);
       if (target) {
         chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
           const mode = res.ppo_traffic_query_mode || 'tab_ui';
@@ -1104,9 +1142,9 @@ function renderProfilesManagerUI(list) {
   listEl.querySelectorAll('.btn-mgr-del').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
-      const target = list.find(p => p.id === id);
+      const target = list.find(p => String(p.id) === id);
       if (confirm(`确定要删除常用配置「${target?.remark || ''}」吗？`)) {
-        const updated = list.filter(p => p.id !== id);
+        const updated = list.filter(p => String(p.id) !== id);
         chrome.storage.local.set({ [PROFILES_STORAGE_KEY]: updated }, () => {
           if (typeof chrome.storage.sync !== 'undefined') {
             try { chrome.storage.sync.set({ [PROFILES_STORAGE_KEY]: updated }, () => {}); } catch(e){}
@@ -1280,6 +1318,7 @@ function handleManualPing() {
 }
 
 function renderServerHealthUI(probes) {
+  probes = asObjectList(probes);
   const barsContainer = document.getElementById('uptime-bars-strip');
   const statusBadge = document.getElementById('monitor-status-badge');
   const statusText = document.getElementById('monitor-status-text');
@@ -1329,7 +1368,7 @@ function renderServerHealthUI(probes) {
     }
 
     const heightPct = p.latencyMs ? Math.min(100, Math.max(25, Math.round((p.latencyMs / 6000) * 100))) : 40;
-    const tooltip = `${p.timeStr || ''} (${p.dateStr || ''})\n状态: ${statusLabel}\n耗时: ${p.latencyMs || 0} ms\nHTTP: ${p.httpStatus || 200}`;
+    const tooltip = escapeHTML(`${asText(p.timeStr)} (${asText(p.dateStr)})\n状态: ${statusLabel}\n耗时: ${asText(p.latencyMs, '0')} ms\nHTTP: ${asText(p.httpStatus, '200')}`);
 
     barsHTML += `
       <div class="uptime-bar ${barClass}" 

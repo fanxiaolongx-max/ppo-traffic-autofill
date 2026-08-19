@@ -270,6 +270,7 @@ function bindEvents() {
   
   const passportInput = document.getElementById('ppo-in-passport-no');
   passportInput?.addEventListener('input', () => {
+    currentPassportFormat = /^[A-Za-z]/.test(passportInput.value.trim()) ? 'raw' : 'cleaned';
     updatePreview();
     saveLiveDraft();
     const hintEl = document.getElementById('ppo-passport-hint');
@@ -663,6 +664,7 @@ function saveNewProfile(remarkName) {
       foreignType: document.querySelector('input[name="ppo_foreign_type"]:checked')?.value || 'foreign',
       country: document.getElementById('ppo-in-country')?.value || '10206',
       passportNo: document.getElementById('ppo-in-passport-no')?.value || '',
+      passportFormat: currentPassportFormat || 'raw',
       nationalId: document.getElementById('ppo-in-national-id')?.value || ''
     };
 
@@ -785,6 +787,20 @@ function applyDraftObj(draft) {
     const cs = document.getElementById('ppo-in-country');
     if (cs) cs.value = draft.country;
   }
+  if (draft.numeralMode) {
+    numeralMode = draft.numeralMode;
+    document.querySelectorAll('#ppo-num-mode-switch .ppo-segment-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-mode') === numeralMode);
+    });
+  }
+  const ownerType = draft.ownerType || 'passport';
+  const ownerRadio = document.querySelector(`input[name="ppo_owner_type"][value="${ownerType}"]`);
+  if (ownerRadio) ownerRadio.checked = true;
+  document.getElementById('ppo-passport-fields').style.display = ownerType === 'passport' ? 'block' : 'none';
+  document.getElementById('ppo-national-id-fields').style.display = ownerType === 'passport' ? 'none' : 'block';
+  const foreignRadio = document.querySelector(`input[name="ppo_foreign_type"][value="${draft.foreignType || 'foreign'}"]`);
+  if (foreignRadio) foreignRadio.checked = true;
+  currentPassportFormat = draft.passportFormat || (/^[A-Za-z]/.test(draft.passportNo || '') ? 'raw' : 'cleaned');
   updatePreview();
 }
 

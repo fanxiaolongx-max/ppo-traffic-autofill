@@ -525,7 +525,9 @@
       saveLiveDraft();
     });
     
-    passportInput.addEventListener('input', () => {
+    const passportInput = document.getElementById('ppo-in-passport-no');
+    passportInput?.addEventListener('input', () => {
+      currentPassportFormat = /^[A-Za-z]/.test(passportInput.value.trim()) ? 'raw' : 'cleaned';
       updatePreview();
       saveLiveDraft();
       const hintEl = document.getElementById('ppo-passport-hint');
@@ -694,6 +696,7 @@
 
   function setFormDataToUI(data) {
     if (!data) return;
+    currentPassportFormat = data.passportFormat || (/^[A-Za-z]/.test(data.passportNo || '') ? 'raw' : 'cleaned');
     if (data.letter1) document.getElementById('ppo-in-letter1').value = data.letter1;
     if (data.letter2) document.getElementById('ppo-in-letter2').value = data.letter2;
     if (data.letter3) document.getElementById('ppo-in-letter3').value = data.letter3;
@@ -752,23 +755,41 @@
   function fillPPOForm(formData, autoSubmit = false) {
     const data = formData || getFormDataFromUI();
 
-    activeQueryData = { ...data };
-    hasRetriedPassportAlternative = false;
-    try {
-      sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
-      sessionStorage.setItem('ppo_retry_count', '0'); // 重置重试计数为 0
-      document.querySelectorAll('[data-ppo-processed]').forEach(el => el.removeAttribute('data-ppo-processed'));
-      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ ppo_active_query_req: activeQueryData });
-      }
-    } catch (e) {}
-
     const validation = isFormDataValid(data);
     if (!validation.valid) {
       showToast(`⚠️ ${validation.reason}！`, true);
       validateButtons();
       return;
     }
+
+    if (autoSubmit) {
+      const submissionFingerprint = [
+        data.letter1 || '', data.letter2 || '', data.letter3 || '', data.platenum || '',
+        data.ownerType || 'passport', data.passportNo || '', data.nationalId || ''
+      ].join('|');
+      const now = Date.now();
+      if (isAwaitingQueryResult) {
+        showToast('⏳ 当前查询尚未结束，已阻止新的重复提交', false);
+        return;
+      }
+      if (submissionFingerprint === lastSubmissionFingerprint && now - lastSubmissionTimestamp < 1500) {
+        showToast('⏳ 相同查询刚刚已提交，请稍候', false);
+        return;
+      }
+      lastSubmissionFingerprint = submissionFingerprint;
+      lastSubmissionTimestamp = now;
+    }
+
+    activeQueryData = { ...data };
+    hasRetriedPassportAlternative = false;
+    try {
+      sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
+      if (autoSubmit) sessionStorage.setItem('ppo_retry_count', '0');
+      document.querySelectorAll('[data-ppo-processed]').forEach(el => el.removeAttribute('data-ppo-processed'));
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ ppo_active_query_req: activeQueryData });
+      }
+    } catch (e) {}
 
     let letter1Input = document.getElementById('P14_LETER_1');
     let numWithLetterInput = document.getElementById('P14_NUMBER_WITH_LETTER');
@@ -1005,6 +1026,9 @@
 
   let currentTaskId = null;
   let lastReportedTaskId = null;
+  let pendingTaskTimer = null;
+  let lastSubmissionFingerprint = '';
+  let lastSubmissionTimestamp = 0;
   let isAwaitingQueryResult = false;
   let querySubmissionTimestamp = 0;
   let queryWatchdogInterval = null;
@@ -1033,11 +1057,44 @@
     }
   }
 
-  function startQueryWatchdog() {
+  const QUERY_TIMEOUT_SECONDS = 25;
+
+  function finishQueryLifecycle({ keepRetryLock = false } = {}) {
     stopQueryWatchdog();
-    queryWatchdogSeconds = 0;
+    isAwaitingQueryResult = false;
+    try {
+      sessionStorage.removeItem('ppo_is_awaiting_query');
+      sessionStorage.removeItem('ppo_query_start_timestamp');
+      if (!keepRetryLock) sessionStorage.removeItem('ppo_retry_count');
+    } catch(e) {}
+  }
+
+  function startQueryWatchdog(resumeExisting = false) {
+    stopQueryWatchdog();
+
+    let storedStart = 0;
+    if (resumeExisting) {
+      try {
+        storedStart = parseInt(sessionStorage.getItem('ppo_query_start_timestamp') || '0', 10);
+      } catch(e) {}
+      const elapsedSeconds = storedStart ? Math.floor((Date.now() - storedStart) / 1000) : QUERY_TIMEOUT_SECONDS;
+      if (!storedStart || elapsedSeconds >= QUERY_TIMEOUT_SECONDS || elapsedSeconds < 0) {
+        finishQueryLifecycle({ keepRetryLock: true });
+        showDiagnosticBanner(
+          '⚠️ 上次查询已终止',
+          '检测到过期或异常中断的查询任务，已停止自动恢复，避免反复刷新和重复提交。请核对信息后手动重试。',
+          true
+        );
+        return false;
+      }
+      querySubmissionTimestamp = storedStart;
+      queryWatchdogSeconds = elapsedSeconds;
+    } else {
+      queryWatchdogSeconds = 0;
+      querySubmissionTimestamp = Date.now();
+    }
+
     isAwaitingQueryResult = true;
-    querySubmissionTimestamp = Date.now();
     try {
       sessionStorage.setItem('ppo_is_awaiting_query', 'true');
       sessionStorage.setItem('ppo_query_start_timestamp', String(querySubmissionTimestamp));
@@ -1073,9 +1130,8 @@
       }
 
       // Stage 4: T=25s - 终极自愈引导
-      if (queryWatchdogSeconds >= 25) {
-        stopQueryWatchdog();
-        isAwaitingQueryResult = false;
+      if (queryWatchdogSeconds >= QUERY_TIMEOUT_SECONDS) {
+        finishQueryLifecycle({ keepRetryLock: true });
         showDiagnosticBanner(
           '⚠️ 官方服务器响应超时 (>25秒)',
           '埃及公诉机关交通内网当前负载极高或 APEX 会话已脱机，建议点击下方「刷新页面并重试」重新发起。',
@@ -1084,6 +1140,7 @@
         showToast('⚠️ 官方系统响应超时，已唤起自愈诊断条', true);
       }
     }, 1000);
+    return true;
   }
 
   function stopQueryWatchdog() {
@@ -1095,8 +1152,7 @@
 
   function forceUnfreezeAndHeal() {
     removeBlockingOverlays(true);
-    stopQueryWatchdog();
-    isAwaitingQueryResult = false;
+    finishQueryLifecycle({ keepRetryLock: true });
     checkAndScrapeResults();
     hideDiagnosticBanner();
     showToast('🎉 已执行强制自愈解卡！所有阻塞遮罩已清理，表单已重新就绪。');
@@ -1319,7 +1375,7 @@
       }
 
       // 已经达到最大尝试次数 (2 次) 或不可重试的错误：彻底停止，永不循环
-      sessionStorage.removeItem('ppo_is_awaiting_query');
+      finishQueryLifecycle({ keepRetryLock: true });
       sessionStorage.setItem('ppo_retry_count', '2'); // 锁定为 2，防止后续 DOM 监听再次触发
       if (errorDialog) {
         errorDialog.setAttribute('data-ppo-processed', 'true');
@@ -1381,8 +1437,10 @@
 
     // 2. 检查是否有无违章提示 (如: لا توجد مخالفات)
     if (officialPageText.includes('لا توجد مخالفات') || officialPageText.includes('لا يوجد مخالفات')) {
-      stopQueryWatchdog();
-      isAwaitingQueryResult = false;
+      const cleanCaptureSign = 'clean_no_violations';
+      if (lastCapturedSign === cleanCaptureSign) return;
+      lastCapturedSign = cleanCaptureSign;
+      finishQueryLifecycle();
       hideDiagnosticBanner();
       const cleanRes = {
         totalFine: '0 جنيه',
@@ -1492,7 +1550,7 @@
   }
 
   function displayCapturedResult(res) {
-    stopQueryWatchdog();
+    finishQueryLifecycle();
     hideDiagnosticBanner();
     renderResultBanner(res);
 
@@ -1812,6 +1870,19 @@
       chrome.storage.local.get(['pendingPpoTask'], (res) => {
         const task = res.pendingPpoTask;
         if (task && task.timestamp && (Date.now() - task.timestamp < 60000)) {
+          const taskId = String(task.id || task.timestamp);
+          if (currentTaskId === taskId) return;
+
+          // 新的跨页任务优先于旧页面残留的等待标记；否则会被重复提交锁误拦截。
+          finishQueryLifecycle();
+          lastSubmissionFingerprint = '';
+          lastSubmissionTimestamp = 0;
+          lastCapturedSign = '';
+          currentTaskId = taskId;
+          if (pendingTaskTimer) {
+            clearInterval(pendingTaskTimer);
+            pendingTaskTimer = null;
+          }
           chrome.storage.local.remove('pendingPpoTask');
           
           setFormDataToUI(task.data);
@@ -1819,7 +1890,17 @@
           
           let hasClickedTab = false;
           let retries = 0;
-          const timer = setInterval(() => {
+          let completed = false;
+          const runTaskOnce = () => {
+            if (completed || currentTaskId !== taskId) return;
+            completed = true;
+            if (pendingTaskTimer) clearInterval(pendingTaskTimer);
+            pendingTaskTimer = null;
+            currentTaskId = null;
+            fillPPOForm(task.data, task.autoSubmit);
+          };
+
+          pendingTaskTimer = setInterval(() => {
             retries++;
             const letterInput = document.getElementById('P14_LETER_1');
             const vehicleTab = Array.from(document.querySelectorAll('a, button, li')).find(el => 
@@ -1827,18 +1908,26 @@
             );
 
             if (letterInput && letterInput.offsetParent !== null) {
-              clearInterval(timer);
-              setTimeout(() => {
-                fillPPOForm(task.data, task.autoSubmit);
-              }, 200);
+              clearInterval(pendingTaskTimer);
+              pendingTaskTimer = null;
+              setTimeout(runTaskOnce, 200);
+              return;
             } else if (vehicleTab && !hasClickedTab) {
               hasClickedTab = true;
               try { vehicleTab.click(); } catch(e){}
             }
 
             if (retries >= 15) {
-              clearInterval(timer);
-              fillPPOForm(task.data, task.autoSubmit);
+              clearInterval(pendingTaskTimer);
+              pendingTaskTimer = null;
+              completed = true;
+              currentTaskId = null;
+              showDiagnosticBanner(
+                '⚠️ 未找到官方查询表单',
+                '已停止自动跳转与重试，避免形成刷新循环。请手动刷新官网或点击「返回官网主页」后再试。',
+                true
+              );
+              showToast('⚠️ 自动填表已安全停止：官方表单未就绪', true);
             }
           }, 300);
         }
@@ -1850,9 +1939,22 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.action === 'direct_fill') {
-        setFormDataToUI(msg.data);
-        fillPPOForm(msg.data, msg.autoSubmit);
-        sendResponse({ success: true });
+        if (pendingTaskTimer) {
+          clearInterval(pendingTaskTimer);
+          pendingTaskTimer = null;
+          currentTaskId = null;
+        }
+
+        // direct_fill 已成功送达时先消费后台占位任务，避免 APEX 提交刷新后再次执行同一任务。
+        chrome.storage.local.remove('pendingPpoTask', () => {
+          finishQueryLifecycle();
+          lastSubmissionFingerprint = '';
+          lastSubmissionTimestamp = 0;
+          lastCapturedSign = '';
+          setFormDataToUI(msg.data);
+          fillPPOForm(msg.data, msg.autoSubmit);
+          sendResponse({ success: true });
+        });
         return true;
       }
     });
@@ -2001,6 +2103,7 @@
         foreignType: document.querySelector('input[name="ppo_foreign_type"]:checked')?.value || 'foreign',
         country: document.getElementById('ppo-in-country')?.value || '10206',
         passportNo: document.getElementById('ppo-in-passport-no')?.value || '',
+        passportFormat: currentPassportFormat || 'raw',
         nationalId: document.getElementById('ppo-in-national-id')?.value || ''
       };
 
@@ -2180,10 +2283,11 @@
         const cached = sessionStorage.getItem('ppo_active_query_req');
         if (cached) activeQueryData = JSON.parse(cached);
       } catch(e) {}
-      startQueryWatchdog();
-      setTimeout(() => {
-        checkAndScrapeResults();
-      }, 500);
+      if (startQueryWatchdog(true)) {
+        setTimeout(() => {
+          checkAndScrapeResults();
+        }, 500);
+      }
     }
   }
 

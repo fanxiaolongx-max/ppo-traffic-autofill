@@ -26,7 +26,8 @@ body {
   user-select: none;
   direction: rtl !important;
   text-align: right !important;
-  overflow-x: hidden;
+  height: 600px;
+  overflow: hidden;
 }
 
 * {
@@ -37,7 +38,8 @@ body {
 .ppo-popup-wrap {
   display: flex;
   flex-direction: column;
-  height: auto;
+  height: 100%;
+  min-height: 0;
   direction: rtl !important;
 }
 
@@ -197,8 +199,13 @@ body {
 /* Body 紧凑化，无限制自动展开 */
 .ppo-body {
   padding: 10px 14px;
-  overflow: visible;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   direction: rtl !important;
+  scrollbar-color: rgba(212, 175, 55, 0.55) transparent;
+  scrollbar-width: thin;
 }
 
 /* Profile Selector 紧凑卡片 */
@@ -589,6 +596,10 @@ body {
   flex-direction: column;
   gap: 6px;
   direction: rtl !important;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.28);
 }
 
 .ppo-btn-main {
@@ -637,6 +648,7 @@ body {
 
 .ppo-btn-sub {
   flex: 1;
+  min-width: 0;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 5px;
@@ -649,6 +661,8 @@ body {
   align-items: center;
   justify-content: center;
   gap: 4px;
+  white-space: nowrap;
+  line-height: 1.2;
   transition: all 0.15s ease;
 }
 

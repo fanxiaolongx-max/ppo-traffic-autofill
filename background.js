@@ -5,6 +5,32 @@
 
 const TARGET_PPO_URL = "https://www.ppo.gov.eg/ppo/r/ppoportal/ppoportal/traffic";
 
+function convertQueryDigits(value, mode = 'latin') {
+  const latin = String(value ?? '')
+    .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  if (mode === 'eastern') return latin.replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+  if (mode === 'persian') return latin.replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
+  return latin;
+}
+
+function resolvePassportForQuery(queryData) {
+  const raw = String(queryData.rawPassportNo || queryData.passportNo || queryData.passport || '').trim();
+  const format = queryData.passportFormat || (/^[A-Za-z]/.test(raw) ? 'raw' : 'cleaned');
+  const resolved = format === 'cleaned' ? raw.replace(/^[A-Za-z]{1,3}/, '').trim() : raw;
+  return convertQueryDigits(resolved, queryData.numeralMode || 'latin');
+}
+
+const activeSilentQueries = new Map();
+
+function getQueryFingerprint(queryData = {}) {
+  return [
+    queryData.letter1 || '', queryData.letter2 || '', queryData.letter3 || '',
+    queryData.platenum || queryData.plateNum || '', queryData.ownerType || 'passport',
+    queryData.passportNo || queryData.passport || '', queryData.nationalId || ''
+  ].join('|');
+}
+
 // 1. 内部消息监听
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'open_and_fill') {
@@ -90,6 +116,17 @@ async function cleanAllSiteTracesAndCookies() {
 
 // 2. 真实内核静默后台渲染与全程过程追踪引擎 (Two-Phase State Machine)
 function executeSilentTabQuery(queryData) {
+  const fingerprint = getQueryFingerprint(queryData);
+  const activeQuery = activeSilentQueries.get(fingerprint);
+  if (activeQuery) return activeQuery;
+
+  const queryPromise = runSilentTabQuery(queryData)
+    .finally(() => activeSilentQueries.delete(fingerprint));
+  activeSilentQueries.set(fingerprint, queryPromise);
+  return queryPromise;
+}
+
+function runSilentTabQuery(queryData) {
   return new Promise(async (resolve, reject) => {
     const startTime = Date.now();
     const traceLogs = [];
@@ -110,6 +147,7 @@ function executeSilentTabQuery(queryData) {
     let isFinished = false;
     let formSubmitted = false;
     let isSubmitting = false;
+    let isScraping = false;
     let queryTimeout = null;
     let pollInterval = null;
 
@@ -144,8 +182,8 @@ function executeSilentTabQuery(queryData) {
       });
       addLog('🌐 创建静默标签页', `Tab ID: ${silentTab.id} (active: false, 处于后台真实渲染)`);
 
-      const rawPassport = String(queryData.passportNo || queryData.passport || '').trim().replace(/^[A-Za-z]{1,3}/, '').trim();
-      const rawNum = String(queryData.platenum || queryData.plateNum || '').trim();
+      const rawPassport = resolvePassportForQuery(queryData);
+      const rawNum = convertQueryDigits(String(queryData.platenum || queryData.plateNum || '').trim(), queryData.numeralMode || 'latin');
       const letters = [queryData.letter1, queryData.letter2, queryData.letter3].filter(Boolean).join(' ');
       const fullPlate = `${letters} ${rawNum}`.trim() || '埃及车辆';
       const isPassport = queryData.ownerType !== 'national_id';
@@ -164,9 +202,10 @@ function executeSilentTabQuery(queryData) {
               letter3: queryData.letter3 || '',
               platenum: rawNum,
               ownerType: queryData.ownerType || 'passport',
+              foreignType: queryData.foreignType || 'foreign',
               country: queryData.country || '10206',
               passportNo: rawPassport,
-              nationalId: String(queryData.nationalId || '')
+              nationalId: convertQueryDigits(String(queryData.nationalId || ''), queryData.numeralMode || 'latin')
             }],
             func: (data) => {
               const letterInput = document.getElementById('P14_LETER_1');
@@ -222,10 +261,10 @@ function executeSilentTabQuery(queryData) {
               });
 
               if (isPass) {
-                // 外籍
+                // 外籍 / 埃及本国
                 const forRadios = document.querySelectorAll('input[name="P14_ISFOREIGN__NUMS_LETTERS"]');
                 forRadios.forEach(r => {
-                  if (r.value === '1') {
+                  if (r.value === (data.foreignType === 'citizen' ? '0' : '1')) {
                     r.checked = true;
                     r.dispatchEvent(new Event('click', { bubbles: true }));
                     r.dispatchEvent(new Event('change', { bubbles: true }));
@@ -239,7 +278,7 @@ function executeSilentTabQuery(queryData) {
                   countrySelect.dispatchEvent(new Event('change', { bubbles: true }));
                 }
 
-                // 纯数字护照
+                // 按配置中已验证的格式提交护照号
                 setVal('P14_PASSPORT_NUM_NUMS_LETTERS', data.passportNo);
               } else {
                 setVal('P14_NATIONAL_ID_NUMS_LETTERS', data.nationalId);
@@ -270,7 +309,8 @@ function executeSilentTabQuery(queryData) {
 
       // 阶段二：轮询检查结果页渲染
       const checkAndScrapeResults = async () => {
-        if (!formSubmitted || isFinished) return;
+        if (!formSubmitted || isFinished || isScraping) return;
+        isScraping = true;
 
         try {
           const results = await chrome.scripting.executeScript({
@@ -334,7 +374,7 @@ function executeSilentTabQuery(queryData) {
             }
           });
 
-          if (results && results[0] && results[0].result && results[0].result.ready) {
+          if (!isFinished && results && results[0] && results[0].result && results[0].result.ready) {
             isFinished = true;
             const scraped = results[0].result;
             const durationMs = Date.now() - startTime;
@@ -379,7 +419,11 @@ function executeSilentTabQuery(queryData) {
             cleanup();
             resolve(finalResult);
           }
-        } catch (err) {}
+        } catch (err) {
+          addLog('⚠️ 结果探测异常', err?.message || '本轮抓取未完成，将继续等待');
+        } finally {
+          isScraping = false;
+        }
       };
 
       // 启动智能自适应轮询
@@ -435,6 +479,7 @@ function saveQueryToHistory(req, scraped, fullPlate) {
           country: req.country || '10206',
           countryName: req.country === '10206' ? 'الصين (中国 / China)' : (req.country || '中国'),
           passportNo: req.passportNo || '',
+          passportFormat: req.passportFormat || (/^[A-Za-z]/.test(req.passportNo || '') ? 'raw' : 'cleaned'),
           nationalId: req.nationalId || '',
           numeralMode: req.numeralMode || 'latin',
           profileName: req.remark || (scraped.isDirectApi ? '极速直连查询' : '网页即时查询'),
@@ -677,6 +722,8 @@ function dispatchQueryTask(queryData) {
       foreignType: queryData.foreignType || 'foreign',
       country: queryData.country || '10206',
       passportNo: String(queryData.passportNo || queryData.passport || ''),
+      rawPassportNo: String(queryData.rawPassportNo || queryData.passportNo || queryData.passport || ''),
+      passportFormat: queryData.passportFormat || (/^[A-Za-z]/.test(queryData.passportNo || queryData.passport || '') ? 'raw' : 'cleaned'),
       nationalId: String(queryData.nationalId || '')
     },
     autoSubmit: true,

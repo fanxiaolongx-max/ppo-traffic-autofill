@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "مساعد استعلام مخالفات المرور مصر (PPO AutoFill)",
+    "description": "Extension Name"
+  },
+  "extDesc": {
+    "message": "مساعد ذكي لملء بيانات رخص المركبات وجوازات السفر لموقع النيابة العامة المصرية وحفظ سجل المخالفات.",
+    "description": "Extension Description"
+  },
+  "extShortName": {
+    "message": "مساعد المرور",
+    "description": "Short Extension Name"
+  }
+}

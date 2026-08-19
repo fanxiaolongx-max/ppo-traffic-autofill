@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "PPO Egypt Traffic Violations Auto-Fill",
+    "description": "Extension Name"
+  },
+  "extDesc": {
+    "message": "Smart auto-fill & traffic fines tracker for Egypt Public Prosecution portal. Multi-profile vehicle management & history export.",
+    "description": "Extension Description"
+  },
+  "extShortName": {
+    "message": "PPO AutoFill",
+    "description": "Short Extension Name"
+  }
+}

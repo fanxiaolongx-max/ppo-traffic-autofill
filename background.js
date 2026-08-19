@@ -52,8 +52,40 @@ async function inspectAndPurgeResidualSessions(addLog) {
   }
 }
 
+// 用户主动点击「重置官网会话」自愈接口
 async function cleanAllSiteTracesAndCookies() {
-  await inspectAndPurgeResidualSessions(null);
+  return new Promise((resolve) => {
+    if (!chrome.cookies) {
+      resolve();
+      return;
+    }
+
+    // 精准清理 APEX 业务会话，严格保留 F5 WAF 硬件信任 Cookie
+    chrome.cookies.getAll({ domain: 'ppo.gov.eg' }, (cookies) => {
+      if (cookies && cookies.length > 0) {
+        cookies.forEach(c => {
+          const name = c.name || '';
+          const isWafCookie = name.startsWith('TS01') || name.startsWith('BIGipServer') || name.startsWith('TS');
+          if (!isWafCookie) {
+            const protocol = c.secure ? 'https:' : 'http:';
+            const cookieUrl = `${protocol}//${c.domain.startsWith('.') ? c.domain.slice(1) : c.domain}${c.path || '/'}`;
+            try {
+              chrome.cookies.remove({ url: cookieUrl, name: c.name });
+            } catch(e) {}
+          }
+        });
+      }
+
+      // 如果当前浏览器中存在官方标签页，自动将其平滑导航重置为干净的初始表单页
+      chrome.tabs.query({}, (tabs) => {
+        const ppoTab = tabs.find(t => t.url && (t.url.includes('ppo.gov.eg/ppo/') || t.url.includes('ppo.gov.eg')));
+        if (ppoTab) {
+          chrome.tabs.update(ppoTab.id, { active: true, url: TARGET_PPO_URL });
+        }
+        resolve();
+      });
+    });
+  });
 }
 
 // 2. 真实内核静默后台渲染与全程过程追踪引擎 (Two-Phase State Machine)

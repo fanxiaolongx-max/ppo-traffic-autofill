@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "PPO 埃及交通违章自动填表助手",
+    "description": "Extension Name"
+  },
+  "extDesc": {
+    "message": "专为埃及公诉机关交通门户定制的违章查询与自动填表助手，支持多车辆管理、字母软键盘与历史档案导出。",
+    "description": "Extension Description"
+  },
+  "extShortName": {
+    "message": "PPO违章助手",
+    "description": "Short Extension Name"
+  }
+}

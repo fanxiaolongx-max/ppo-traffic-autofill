@@ -462,8 +462,9 @@ function renderTableView() {
 
     let passFormatBadge = '';
     if (rec.request?.ownerType === 'passport') {
-      const isRaw = rec.request?.passportFormat === 'raw' || /^[A-Za-z]/.test(rec.request?.passportNo || '');
-      passFormatBadge = isRaw 
+      const isCleaned = rec.request?.passportFormat === 'cleaned' || (!rec.request?.passportFormat && !/^[A-Za-z]/.test(rec.request?.passportNo || ''));
+      const isRaw = rec.request?.passportFormat === 'raw' || (!isCleaned && /^[A-Za-z]/.test(rec.request?.passportNo || ''));
+      passFormatBadge = !isCleaned && isRaw 
         ? `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3);">🔤带字母原版</span>`
         : `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">🔢纯数字</span>`;
     }
@@ -539,8 +540,9 @@ function renderCardsView() {
 
     let passFormatBadge = '';
     if (rec.request?.ownerType === 'passport') {
-      const isRaw = rec.request?.passportFormat === 'raw' || /^[A-Za-z]/.test(rec.request?.passportNo || '');
-      passFormatBadge = isRaw 
+      const isCleaned = rec.request?.passportFormat === 'cleaned' || (!rec.request?.passportFormat && !/^[A-Za-z]/.test(rec.request?.passportNo || ''));
+      const isRaw = rec.request?.passportFormat === 'raw' || (!isCleaned && /^[A-Za-z]/.test(rec.request?.passportNo || ''));
+      passFormatBadge = !isCleaned && isRaw 
         ? `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3);">🔤带字母</span>`
         : `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">🔢纯数字</span>`;
     }

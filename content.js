@@ -866,18 +866,35 @@
       const countryVal = data.country || '10206';
       setSelectValue('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS', countryVal);
 
-      // 4. 填入护照号码 (自适应格式)
-      const rawPassport = (data.passportNo || '').trim();
+      // 4. 填入护照号码 (自适应格式与生效属性强同步)
+      const rawPassport = (data.rawPassportNo || data.passportNo || '').trim();
       let passportToFill = rawPassport;
+      let effectiveFormat = data.passportFormat;
 
-      if (data.passportFormat === 'raw') {
+      if (effectiveFormat === 'raw') {
         passportToFill = rawPassport; // 明确指定为原版：直接使用带前缀字母 (如 EF2891946)
-      } else if (data.passportFormat === 'cleaned') {
+      } else if (effectiveFormat === 'cleaned') {
         passportToFill = cleanPassportNumber(rawPassport); // 明确指定为纯数字 (如 2891946)
       } else {
-        // 如果未特别指定，若输入的护照包含字母，则直接以原版带字母提交；若报错会自动切换纯数字重试
-        passportToFill = rawPassport;
+        if (/^[A-Za-z]/.test(rawPassport)) {
+          passportToFill = rawPassport;
+          effectiveFormat = 'raw';
+        } else {
+          passportToFill = rawPassport;
+          effectiveFormat = 'cleaned';
+        }
       }
+
+      // 关键修正：确保 activeQueryData 中的 passportNo 永远是实际提交给官方的生效号码 (passportToFill)！
+      activeQueryData = {
+        ...data,
+        passportNo: passportToFill,
+        rawPassportNo: rawPassport,
+        passportFormat: effectiveFormat
+      };
+      try {
+        sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
+      } catch (e) {}
 
       const finalPassport = window.NumberUtils ? window.NumberUtils.convert(passportToFill, data.numeralMode || numeralMode) : passportToFill;
       setFieldValue('P14_PASSPORT_NUM_NUMS_LETTERS', finalPassport);

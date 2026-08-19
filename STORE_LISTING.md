@@ -2,21 +2,40 @@
 
 本文件包含了提交至 **Chrome Web Store** 与 **Microsoft Edge Add-ons** 时所需的完整中、英、阿三语文本资料。
 
-## Version 1.0.2 Release Notes
+## Version 1.0.3 Release Notes
 
 ### 简体中文
 ```text
-修复护照字母前缀与数字格式在静默查询中的处理问题；改进小尺寸弹窗布局；增强历史数据导入与 CSV 导出安全性；加入查询任务去重、25 秒超时熔断和页面刷新恢复清理，避免重复提交或反复查询。
+移除实验性的后台静默查询模式与查询模式切换开关，所有查询统一走稳定的网页填表流程；新增埃及当地深夜时段查询前提醒，该时段官方后端常不可用；新增「官方后端服务暂时不可用」错误识别，不再误导用户核对车牌与证件；修复「仅填表」按钮在非官网页面点击时会被强制提交查询的问题。
 ```
 
 ### English
 ```text
-Fixed passport-prefix and numeral-format handling in silent queries, improved compact popup usability, hardened history import and CSV export, and added task deduplication, a 25-second circuit breaker, and stale-session cleanup to prevent repeated submissions or query loops.
+Removed the experimental background query mode and its mode switcher, so every query now runs through the stable on-page form flow; added a pre-query notice during Egypt's late-night hours when the official backend is often unavailable; added detection for "backend service unavailable" errors so users are no longer misled into rechecking correct plate and passport data; fixed the "fill only" button being force-submitted when clicked outside the official portal.
 ```
 
 ### العربية
 ```text
-إصلاح معالجة بادئة جواز السفر وتنسيق الأرقام في الاستعلام الصامت، وتحسين نافذة الإضافة، وتعزيز أمان الاستيراد وتصدير CSV، وإضافة منع تكرار المهام وحد زمني مدته 25 ثانية لمنع تكرار الإرسال أو الاستعلام المستمر.
+تمت إزالة وضع الاستعلام التجريبي في الخلفية ومفتاح تبديل الأوضاع، وأصبحت جميع الاستعلامات تتم عبر ملء النموذج داخل الصفحة الرسمية؛ مع إضافة تنبيه قبل الاستعلام خلال ساعات الليل بتوقيت مصر حين تكون خدمة النيابة غير متاحة، وإضافة تمييز لخطأ «تعذّرت معالجة الطلب» حتى لا يُطلب من المستخدم مراجعة بيانات صحيحة أصلاً؛ مع إصلاح زر «الملء فقط».
+```
+
+---
+
+## Version 1.0.2 Release Notes
+
+### 简体中文
+```text
+修复护照字母前缀与数字格式的处理问题；改进小尺寸弹窗布局；增强历史数据导入与 CSV 导出安全性；加入查询任务去重、25 秒超时熔断和页面刷新恢复清理，避免重复提交或反复查询。
+```
+
+### English
+```text
+Fixed passport-prefix and numeral-format handling, improved compact popup usability, hardened history import and CSV export, and added task deduplication, a 25-second circuit breaker, and stale-session cleanup to prevent repeated submissions or query loops.
+```
+
+### العربية
+```text
+إصلاح معالجة بادئة جواز السفر وتنسيق الأرقام، وتحسين نافذة الإضافة، وتعزيز أمان الاستيراد وتصدير CSV، وإضافة منع تكرار المهام وحد زمني مدته 25 ثانية لمنع تكرار الإرسال أو الاستعلام المستمر.
 ```
 
 ---

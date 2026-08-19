@@ -36,19 +36,6 @@
       </button>
     </div>
 
-    <!-- 查询模式切换分段开关 (极速直连 vs 网页模拟) -->
-    <div class="ppo-mode-switcher-bar" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; background: rgba(212,175,55,0.06); border-bottom: 1px solid rgba(212,175,55,0.18); font-size: 11px;">
-      <span style="color: var(--ppo-text-muted); font-weight: 500;">⚡ 查询执行模式:</span>
-      <div class="ppo-segment-group" id="ppo-query-mode-switch" style="display: flex; gap: 4px; background: rgba(0,0,0,0.4); padding: 2px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
-        <button type="button" class="ppo-mode-btn" data-mode="direct" title="测试：后台真实静默渲染，不抢焦点不跳页、查完自毁、100%免疫 WAF 拦截" style="padding: 3px 8px; font-size: 10.5px; border-radius: 4px; border: none; cursor: pointer; background: transparent; color: var(--ppo-text-muted); font-weight: normal;">
-          🚀 极速静默 (新逻辑)
-        </button>
-        <button type="button" class="ppo-mode-btn active" data-mode="tab_ui" title="推荐：在前台打开官方网站并在网页中可视化稳定填表" style="padding: 3px 8px; font-size: 10.5px; border-radius: 4px; border: none; cursor: pointer; background: var(--ppo-gold); color: #000; font-weight: 700;">
-          🌐 网页前台 (旧逻辑)
-        </button>
-      </div>
-    </div>
-
     <!-- 违章罚款结果捕捉展示横幅 -->
     <div class="ppo-result-banner" id="ppo-result-banner">
       <div class="ppo-result-header">
@@ -243,6 +230,16 @@
 
     <!-- 底部操作按钮 -->
     <div class="ppo-footer">
+      <!-- 埃及当地深夜时段查询前提醒 (默认隐藏) -->
+      <div class="ppo-night-warning" id="ppo-night-warning">
+        <div class="ppo-night-warning-title">🌙 建议白天再查询</div>
+        <div class="ppo-night-warning-text" id="ppo-night-warning-text"></div>
+        <div class="ppo-night-warning-actions">
+          <button type="button" class="ppo-night-btn ppo-night-btn-ghost" id="ppo-night-btn-cancel">知道了</button>
+          <button type="button" class="ppo-night-btn ppo-night-btn-go" id="ppo-night-btn-proceed">仍要查询</button>
+        </div>
+      </div>
+
       <button type="button" class="ppo-btn-main" id="ppo-btn-fill-submit">
         <span>🔍 立即查询 (填入并自动查询)</span>
       </button>

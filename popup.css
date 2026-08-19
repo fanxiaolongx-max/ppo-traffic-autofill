@@ -671,6 +671,65 @@ body {
   color: #fff;
 }
 
+/* 埃及当地深夜时段提醒条 */
+.ppo-night-warning {
+  display: none;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin-bottom: 9px;
+}
+
+.ppo-night-warning.show {
+  display: block;
+}
+
+.ppo-night-warning-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fbbf24;
+  margin-bottom: 5px;
+}
+
+.ppo-night-warning-text {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ppo-text-muted);
+  white-space: pre-wrap;
+  margin-bottom: 8px;
+}
+
+.ppo-night-warning-actions {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.ppo-night-btn {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.ppo-night-btn:hover {
+  filter: brightness(1.15);
+}
+
+.ppo-night-btn-ghost {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ppo-text-muted);
+}
+
+.ppo-night-btn-go {
+  background: #f59e0b;
+  color: #1a1a1a;
+}
+
 /* Toast Message */
 .ppo-toast {
   position: fixed;

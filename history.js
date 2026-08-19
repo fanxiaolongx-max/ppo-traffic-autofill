@@ -697,7 +697,7 @@ function openDetailModal(rec) {
   modal.classList.add('show');
 }
 
-// 一键再次填表/查询 (支持极速直连与网页模式)
+// 一键再次打开官网填表并查询
 function refillAndQueryRecord(rec) {
   const req = rec.request;
   if (!req) return;
@@ -716,39 +716,32 @@ function refillAndQueryRecord(rec) {
     remark: req.profileName || '历史记录再次查询'
   };
 
-  chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-    const mode = res.ppo_traffic_query_mode || 'tab_ui'; // 默认网页前台模式
-
-    if (mode === 'direct') {
-      const btnRefill = Array.from(document.querySelectorAll('.btn-refill'))
-        .find(btn => btn.dataset.id === String(rec.id));
-      if (btnRefill) btnRefill.textContent = '⏳ 查询中...';
-
-      chrome.runtime.sendMessage({
-        action: 'execute_direct_query',
-        data: queryPayload
-      }, (resp) => {
-        if (btnRefill) btnRefill.textContent = '一键填表';
-
-        if (resp && resp.success && resp.data) {
-          alert(`🎉 静默后台查询完成！\n\n• 车牌: ${req.fullPlate || '埃及车辆'}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 2500}ms\n\n新查询结果与毫秒级全流程执行日志已录入历史档案！点击「详情」可查看完整过程！`);
-          loadHistoryData();
-        } else {
-          alert(`⚠️ 静默查询提示: ${resp?.error || '失败'}，将为您自动打开官方前台网页模式`);
-          dispatchQueryTaskToTab(queryPayload);
-        }
-      });
-    } else {
-      dispatchQueryTaskToTab(queryPayload);
-    }
-  });
+  dispatchQueryTaskToTab(queryPayload);
 }
 
 function dispatchQueryTaskToTab(data) {
-  chrome.runtime.sendMessage({
+  const send = () => chrome.runtime.sendMessage({
     action: 'open_and_fill',
     data: data,
     autoSubmit: true
+  });
+
+  // 埃及当地深夜时段先提醒，此时官方后端常调不通
+  const utils = window.EgyptTimeUtils;
+  if (!utils) {
+    send();
+    return;
+  }
+
+  utils.shouldWarnBeforeQuery().then((needWarn) => {
+    if (!needWarn) {
+      send();
+      return;
+    }
+    utils.suppressForToday();
+    if (confirm(`🌙 建议白天再查询\n\n${utils.getWarningText()}\n\n仍要现在查询吗？`)) {
+      send();
+    }
   });
 }
 
@@ -1112,28 +1105,7 @@ function renderProfilesManagerUI(list) {
       const id = btn.dataset.id;
       const target = list.find(p => String(p.id) === id);
       if (target) {
-        chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-          const mode = res.ppo_traffic_query_mode || 'tab_ui';
-          if (mode === 'direct') {
-            btn.textContent = '⏳ 查询中...';
-            chrome.runtime.sendMessage({
-              action: 'execute_direct_query',
-              data: target
-            }, (resp) => {
-              btn.textContent = '🚀 填表查询';
-              if (resp && resp.success && resp.data) {
-                alert(`🎉 静默后台查询完成！\n\n• 配置: ${target.remark || ''}\n• 总罚款: ${resp.data.totalFine}\n• 违章笔数: ${resp.data.violationCount} 笔\n• 耗时: ${resp.data.latencyMs || 2500}ms\n\n已自动保存至历史档案，点击「详情」可查看完整毫秒级执行过程！`);
-                document.getElementById('profiles-modal-overlay')?.classList.remove('show');
-                loadHistoryData();
-              } else {
-                alert(`⚠️ 静默查询提示: ${resp?.error || '失败'}，将为您自动打开官方前台网页模式`);
-                dispatchQueryTaskToTab(target);
-              }
-            });
-          } else {
-            dispatchQueryTaskToTab(target);
-          }
-        });
+        dispatchQueryTaskToTab(target);
       }
     });
   });
@@ -1216,46 +1188,11 @@ function handleImportProfiles(e) {
   reader.readAsText(file);
 }
 
-// 页面加载就绪后初始化配置管理器、模式切换器与服务器监控看板
+// 页面加载就绪后初始化配置管理器与服务器监控看板
 document.addEventListener('DOMContentLoaded', () => {
   initProfilesManager();
   initServerHealthMonitor();
-  initHistoryQueryModeSwitcher();
 });
-
-const QUERY_MODE_STORAGE_KEY = 'ppo_traffic_query_mode';
-
-function initHistoryQueryModeSwitcher() {
-  chrome.storage.local.get([QUERY_MODE_STORAGE_KEY], (res) => {
-    const mode = res[QUERY_MODE_STORAGE_KEY] || 'tab_ui';
-    updateHistoryModeUI(mode);
-  });
-
-  document.querySelectorAll('#history-query-mode-switch .btn-mode-pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mode = btn.getAttribute('data-mode');
-      chrome.storage.local.set({ [QUERY_MODE_STORAGE_KEY]: mode }, () => {
-        updateHistoryModeUI(mode);
-      });
-    });
-  });
-}
-
-function updateHistoryModeUI(mode) {
-  document.querySelectorAll('#history-query-mode-switch .btn-mode-pill').forEach(btn => {
-    const isAct = btn.getAttribute('data-mode') === mode;
-    btn.classList.toggle('active', isAct);
-    if (isAct) {
-      btn.style.background = 'var(--primary-gold)';
-      btn.style.color = '#000';
-      btn.style.fontWeight = '700';
-    } else {
-      btn.style.background = 'transparent';
-      btn.style.color = 'var(--text-muted)';
-      btn.style.fontWeight = 'normal';
-    }
-  });
-}
 
 // 官方服务器健康状态与 GitHub 风格 Uptime 状态条监控
 const SERVER_PROBES_STORAGE_KEY = 'ppo_traffic_server_probes_v1';

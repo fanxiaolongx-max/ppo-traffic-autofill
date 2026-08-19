@@ -84,6 +84,109 @@ const NumberUtils = {
   }
 };
 
+/**
+ * 埃及当地时段工具
+ *
+ * 用途：官方后端在埃及当地深夜时段容易出现「حدث خطأ أثناء معالجة الطلب」(处理请求出错)，
+ * 此时前端页面一切正常、表单也能提交，但后端服务调不通，查询必然失败。
+ * 查询前先做提醒，避免用户以为是自己车牌或证件填错了。
+ *
+ * 注意：必须按埃及当地时间判断，不能用本机时间 —— 用户可能身处任意时区，
+ * 而官方系统的作息只跟开罗时间有关。
+ */
+const EgyptTimeUtils = {
+  NIGHT_START_HOUR: 0,   // 埃及当地 00:00 起
+  NIGHT_END_HOUR: 6,     // 埃及当地 06:00 止 (不含)
+  TIMEZONE: 'Africa/Cairo',
+  SKIP_KEY: 'ppo_night_warning_skip_date',
+
+  /** 取埃及当地小时数 (0-23)，取不到时回退本机时间 */
+  getCairoHour() {
+    try {
+      const text = new Intl.DateTimeFormat('en-US', {
+        timeZone: this.TIMEZONE,
+        hour: '2-digit',
+        hour12: false,
+        hourCycle: 'h23'
+      }).format(new Date());
+      const hour = parseInt(text, 10);
+      if (Number.isNaN(hour)) return new Date().getHours();
+      return hour % 24; // 部分实现会把午夜返回成 24
+    } catch (e) {
+      return new Date().getHours();
+    }
+  },
+
+  /** 取埃及当地时刻文本，如 "00:35" */
+  getCairoTimeText() {
+    try {
+      return new Intl.DateTimeFormat('zh-CN', {
+        timeZone: this.TIMEZONE,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        hourCycle: 'h23'
+      }).format(new Date());
+    } catch (e) {
+      return '';
+    }
+  },
+
+  /** 取埃及当地日期，如 "2026-08-20"，用于「今天不再提示」 */
+  getCairoDateStr() {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: this.TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+    } catch (e) {
+      return new Date().toISOString().slice(0, 10);
+    }
+  },
+
+  /** 当前是否处于埃及当地深夜时段 */
+  isLateNight() {
+    const hour = this.getCairoHour();
+    return hour >= this.NIGHT_START_HOUR && hour < this.NIGHT_END_HOUR;
+  },
+
+  /** 供界面直接展示的提醒文案 */
+  getWarningText() {
+    return `现在是埃及当地 ${this.getCairoTimeText()}，属于深夜时段。\n\n`
+      + '官方后端服务在深夜容易出现「处理请求出错 / 会话已结束」，此时无论用扩展还是手动填表都查不出结果，'
+      + '与你填写的车牌、护照号无关。\n\n建议在埃及当地白天再查询。';
+  },
+
+  /** 今天是否已被用户选择「不再提示」 */
+  isSuppressedToday() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get([this.SKIP_KEY], (res) => {
+          resolve(res && res[this.SKIP_KEY] === this.getCairoDateStr());
+        });
+      } catch (e) {
+        resolve(false);
+      }
+    });
+  },
+
+  /** 记录今天不再提示 */
+  suppressForToday() {
+    try {
+      chrome.storage.local.set({ [this.SKIP_KEY]: this.getCairoDateStr() });
+    } catch (e) {}
+  },
+
+  /** 是否需要在本次查询前提醒 */
+  async shouldWarnBeforeQuery() {
+    if (!this.isLateNight()) return false;
+    return !(await this.isSuppressedToday());
+  }
+};
+
 if (typeof window !== 'undefined') {
   window.NumberUtils = NumberUtils;
+  window.EgyptTimeUtils = EgyptTimeUtils;
 }

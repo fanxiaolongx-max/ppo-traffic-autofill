@@ -42,61 +42,16 @@ const COMMON_LETTERS = [
 let activeLetterTarget = 'letter1';
 let numeralMode = 'latin';
 let currentProfileId = null;
-let currentQueryMode = 'tab_ui'; // 默认旧逻辑：网页前台稳定模式
 
 const STORAGE_KEY = 'ppo_traffic_profiles_v2';
 const LAST_ACTIVE_KEY = 'ppo_traffic_last_active_id';
-const QUERY_MODE_KEY = 'ppo_traffic_query_mode';
 
 document.addEventListener('DOMContentLoaded', () => {
   initDOM();
-  initQueryModeSwitcher();
   bindEvents();
   loadProfilesFromStorage();
   initPopupServerHealth();
 });
-
-function initQueryModeSwitcher() {
-  chrome.storage.local.get([QUERY_MODE_KEY], (res) => {
-    currentQueryMode = res[QUERY_MODE_KEY] || 'tab_ui';
-    updateQueryModeUI(currentQueryMode);
-  });
-
-  document.querySelectorAll('#ppo-query-mode-switch .ppo-mode-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mode = btn.getAttribute('data-mode');
-      currentQueryMode = mode;
-      chrome.storage.local.set({ [QUERY_MODE_KEY]: mode });
-      updateQueryModeUI(mode);
-      showToast(mode === 'direct' ? '🚀 已切换至「极速协议直连模式」' : '🌐 已切换至「传统网页模式」');
-    });
-  });
-}
-
-function updateQueryModeUI(mode) {
-  document.querySelectorAll('#ppo-query-mode-switch .ppo-mode-btn').forEach(btn => {
-    const isAct = btn.getAttribute('data-mode') === mode;
-    btn.classList.toggle('active', isAct);
-    if (isAct) {
-      btn.style.background = 'var(--ppo-gold)';
-      btn.style.color = '#000';
-      btn.style.fontWeight = '700';
-    } else {
-      btn.style.background = 'transparent';
-      btn.style.color = 'var(--ppo-text-muted)';
-      btn.style.fontWeight = 'normal';
-    }
-  });
-
-  const submitBtn = document.getElementById('ppo-btn-fill-submit');
-  if (submitBtn) {
-    if (mode === 'direct') {
-      submitBtn.innerHTML = '<span>🚀 极速静默查询 (秒级出结果·不跳页)</span>';
-    } else {
-      submitBtn.innerHTML = '<span>🔍 打开网页查询 (前台可视化填表)</span>';
-    }
-  }
-}
 
 function initDOM() {
   // 初始化国籍下拉菜单 (中国 10206 默认高亮置顶)
@@ -416,6 +371,41 @@ function validateButtons() {
   }
 }
 
+// 埃及当地深夜时段提醒：官方后端此时常不可用，先提示再让用户决定
+function showNightWarning(onProceed) {
+  const box = document.getElementById('ppo-night-warning');
+  const textEl = document.getElementById('ppo-night-warning-text');
+  if (!box || !textEl || !window.EgyptTimeUtils) {
+    onProceed();
+    return;
+  }
+
+  textEl.textContent = window.EgyptTimeUtils.getWarningText();
+  box.classList.add('show');
+
+  const cancelBtn = document.getElementById('ppo-night-btn-cancel');
+  const proceedBtn = document.getElementById('ppo-night-btn-proceed');
+
+  const close = () => {
+    box.classList.remove('show');
+    // 用户已知情，当天不再重复打扰
+    window.EgyptTimeUtils.suppressForToday();
+  };
+
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      close();
+      showToast('已取消查询，建议白天再试');
+    };
+  }
+  if (proceedBtn) {
+    proceedBtn.onclick = () => {
+      close();
+      onProceed();
+    };
+  }
+}
+
 // 智能跨页面检测与任务派发
 function handleTriggerAction(autoSubmit) {
   const validation = isFormDataValid();
@@ -425,50 +415,23 @@ function handleTriggerAction(autoSubmit) {
     return;
   }
 
-  const data = getFormData();
-
-  // 如果启用了「🚀 极速静默渲染模式」且需要自动查询
-  if (autoSubmit && currentQueryMode === 'direct') {
-    const submitBtn = document.getElementById('ppo-btn-fill-submit');
-    const origHtml = submitBtn ? submitBtn.innerHTML : '';
-    if (submitBtn) {
-      submitBtn.innerHTML = '<span>⏳ 正在真实内核静默渲染查询中...</span>';
-      submitBtn.disabled = true;
-    }
-    showToast('🚀 正在后台静默真实渲染查询中 (不抢焦点)...');
-
-    chrome.runtime.sendMessage({
-      action: 'execute_direct_query',
-      data: data
-    }, (resp) => {
-      if (submitBtn) {
-        submitBtn.innerHTML = origHtml;
-        submitBtn.disabled = false;
-      }
-
-      if (resp && resp.success && resp.data) {
-        const result = resp.data;
-        // 立即在当前 Popup 弹窗横幅中渲染最新结果
-        const banner = document.getElementById('ppo-result-banner');
-        if (banner) banner.style.display = 'block';
-        const totalEl = document.getElementById('ppo-res-total');
-        if (totalEl) totalEl.textContent = result.totalFine || '0 جنيه';
-        const countEl = document.getElementById('ppo-res-count');
-        if (countEl) countEl.textContent = result.violationCount || '0';
-        const reconcileEl = document.getElementById('ppo-res-reconcile');
-        if (reconcileEl) reconcileEl.textContent = result.reconcileFine || '0 جنيه';
-        const timeEl = document.getElementById('ppo-result-time');
-        if (timeEl) timeEl.textContent = `极速直连 (${result.latencyMs || 800}ms)`;
-
-        showToast(`🎉 查获结果：${result.totalFine} (${result.violationCount} 笔违章)`);
+  // 仅在真正发起查询时提醒；「仅填表」不受影响
+  if (autoSubmit && window.EgyptTimeUtils) {
+    window.EgyptTimeUtils.shouldWarnBeforeQuery().then((needWarn) => {
+      if (needWarn) {
+        showNightWarning(() => executeTriggerAction(autoSubmit));
       } else {
-        const errMsg = resp?.error || '网络握手异常';
-        showToast(`⚠️ 直连未成功: ${errMsg}，正在自动为您打开网页模式...`, true);
-        dispatchViaBackground(data, true);
+        executeTriggerAction(autoSubmit);
       }
     });
     return;
   }
+
+  executeTriggerAction(autoSubmit);
+}
+
+function executeTriggerAction(autoSubmit) {
+  const data = getFormData();
 
   showToast('🚀 正在处理中...');
 

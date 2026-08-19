@@ -565,7 +565,7 @@
     });
 
     document.getElementById('ppo-btn-fill-submit').addEventListener('click', () => {
-      fillPPOForm(getFormDataFromUI(), true);
+      confirmLateNightBeforeQuery(() => fillPPOForm(getFormDataFromUI(), true));
     });
 
     document.getElementById('ppo-btn-clear').addEventListener('click', () => {
@@ -1024,6 +1024,28 @@
     }
   }
 
+  // 埃及当地深夜时段查询前提醒：此时官方后端常调不通，先让用户知情再决定
+  function confirmLateNightBeforeQuery(onProceed) {
+    const utils = window.EgyptTimeUtils;
+    if (!utils) {
+      onProceed();
+      return;
+    }
+
+    utils.shouldWarnBeforeQuery().then((needWarn) => {
+      if (!needWarn) {
+        onProceed();
+        return;
+      }
+      utils.suppressForToday(); // 已知情，当天不再重复打扰
+      if (window.confirm(`🌙 建议白天再查询\n\n${utils.getWarningText()}\n\n仍要现在查询吗？`)) {
+        onProceed();
+      } else {
+        showToast('已取消查询，建议白天再试');
+      }
+    });
+  }
+
   let currentTaskId = null;
   let lastReportedTaskId = null;
   let pendingTaskTimer = null;
@@ -1203,7 +1225,26 @@
       };
     }
 
-    // 3. 官方服务执行出错 (حدث خطأ أثناء تنفيذ الخدمة)
+    // 3. 官方后端服务不可用 (حدث خطأ أثناء معالجة الطلب)
+    // 前端页面与表单一切正常、请求也已被受理，但官方后端服务调不通。
+    // 实测在埃及当地深夜时段高发，此时手动填表同样失败，与用户填写的数据无关。
+    if (combined.includes('معالجة الطلب') || combined.includes('برجاء المحاولة لاحقا')) {
+      const utils = window.EgyptTimeUtils;
+      const timeHint = utils && utils.isLateNight()
+        ? `\n当前埃及当地时间 ${utils.getCairoTimeText()}，正处于深夜时段，这类故障在此时段高发。`
+        : '';
+      return {
+        title: '⚠️ 官方后端服务暂时不可用 (حدث خطأ أثناء معالجة الطلب)',
+        detail: '官方网页前端正常，请求也已送达，但后端查询服务调用失败。'
+          + '常见于官方的维护或数据同步窗口。' + timeHint,
+        suggestion: '你填写的车牌与证件信息无需修改 —— 此时手动在官网填表同样会失败。'
+          + '\n建议在埃及当地白天重试。已自动关闭官方报错弹窗。',
+        autoDismiss: true,
+        rawReason: 'حدث خطأ أثناء معالجة الطلب برجاء المحاولة لاحقا'
+      };
+    }
+
+    // 4. 官方服务执行出错 (حدث خطأ أثناء تنفيذ الخدمة)
     if (combined.includes('حدث خطأ أثناء تنفيذ الخدمة') || combined.includes('خطأ أثناء تنفيذ')) {
       return {
         title: '⚠️ 官方服务执行出错 (خطأ أثناء تنفيذ الخدمة)',
@@ -1228,7 +1269,8 @@
       return {
         title: '🌐 官方网关超时脱机 (502/503/504)',
         detail: '埃及政府网络网关无响应或遭遇网络拥堵。',
-        suggestion: '请检查网络连接或运行 trust_ppo_cert.sh 证书信任脚本。',
+        suggestion: '请检查网络连接。若浏览器控制台同时出现 ERR_CERT_AUTHORITY_INVALID，'
+          + '说明官网漏发了中间证书，运行项目内的 trust_ppo_cert.sh 可自动补全证书链。',
         autoDismiss: false,
         rawReason: '502/503 Gateway Error'
       };

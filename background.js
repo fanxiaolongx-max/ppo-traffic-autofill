@@ -5,46 +5,10 @@
 
 const TARGET_PPO_URL = "https://www.ppo.gov.eg/ppo/r/ppoportal/ppoportal/traffic";
 
-function convertQueryDigits(value, mode = 'latin') {
-  const latin = String(value ?? '')
-    .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-    .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
-  if (mode === 'eastern') return latin.replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
-  if (mode === 'persian') return latin.replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]);
-  return latin;
-}
-
-function resolvePassportForQuery(queryData) {
-  const raw = String(queryData.rawPassportNo || queryData.passportNo || queryData.passport || '').trim();
-  const format = queryData.passportFormat || (/^[A-Za-z]/.test(raw) ? 'raw' : 'cleaned');
-  const resolved = format === 'cleaned' ? raw.replace(/^[A-Za-z]{1,3}/, '').trim() : raw;
-  return convertQueryDigits(resolved, queryData.numeralMode || 'latin');
-}
-
-const activeSilentQueries = new Map();
-
-function getQueryFingerprint(queryData = {}) {
-  return [
-    queryData.letter1 || '', queryData.letter2 || '', queryData.letter3 || '',
-    queryData.platenum || queryData.plateNum || '', queryData.ownerType || 'passport',
-    queryData.passportNo || queryData.passport || '', queryData.nationalId || ''
-  ].join('|');
-}
-
 // 1. 内部消息监听
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'open_and_fill') {
     handleOpenAndFill(message.data, message.autoSubmit !== false, sendResponse);
-    return true;
-  }
-  if (message.action === 'execute_direct_query') {
-    executeSilentTabQuery(message.data)
-      .then((res) => {
-        sendResponse({ success: true, mode: 'direct', data: res });
-      })
-      .catch((err) => {
-        sendResponse({ success: false, mode: 'direct', error: err.message });
-      });
     return true;
   }
   if (message.action === 'open_history_tab') {
@@ -70,13 +34,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
-
-// 执行前环境自检 (零干扰，确保不误伤用户正在浏览的页面)
-async function inspectAndPurgeResidualSessions(addLog) {
-  if (addLog) {
-    addLog('🔍 环境自检', '已就绪独立查询通道，准备接入官方网关');
-  }
-}
 
 // 用户主动点击「重置官网会话」自愈接口
 async function cleanAllSiteTracesAndCookies() {
@@ -111,334 +68,6 @@ async function cleanAllSiteTracesAndCookies() {
         resolve();
       });
     });
-  });
-}
-
-// 2. 真实内核静默后台渲染与全程过程追踪引擎 (Two-Phase State Machine)
-function executeSilentTabQuery(queryData) {
-  const fingerprint = getQueryFingerprint(queryData);
-  const activeQuery = activeSilentQueries.get(fingerprint);
-  if (activeQuery) return activeQuery;
-
-  const queryPromise = runSilentTabQuery(queryData)
-    .finally(() => activeSilentQueries.delete(fingerprint));
-  activeSilentQueries.set(fingerprint, queryPromise);
-  return queryPromise;
-}
-
-function runSilentTabQuery(queryData) {
-  return new Promise(async (resolve, reject) => {
-    const startTime = Date.now();
-    const traceLogs = [];
-
-    function addLog(stepName, details) {
-      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(2);
-      const line = `[+${elapsedSec}s] ${stepName}: ${details || ''}`;
-      traceLogs.push(line);
-      console.log(`[PPO-SilentTab] ${line}`);
-    }
-
-    addLog('🚀 启动任务', '初始化静默真实浏览器渲染引擎 (不抢焦点·完全绕过 WAF 防火墙)');
-
-    // 1. 执行前会话探查与深度净化
-    await inspectAndPurgeResidualSessions(addLog);
-
-    let silentTab = null;
-    let isFinished = false;
-    let formSubmitted = false;
-    let isSubmitting = false;
-    let isScraping = false;
-    let queryTimeout = null;
-    let pollInterval = null;
-
-    const cleanup = () => {
-      if (queryTimeout) clearTimeout(queryTimeout);
-      if (pollInterval) clearInterval(pollInterval);
-      if (silentTab && silentTab.id) {
-        try {
-          chrome.tabs.remove(silentTab.id, () => {
-            if (chrome.runtime.lastError) {}
-          });
-          addLog('🚪 资源回收', `已自动静默关闭临时后台标签页 (Tab ID: ${silentTab.id})`);
-        } catch (e) {}
-      }
-    };
-
-    // 25 秒总超时熔断保护
-    queryTimeout = setTimeout(() => {
-      if (!isFinished) {
-        isFinished = true;
-        addLog('⏰ 超时熔断', '官方网站响应超过 25 秒，正在终止任务');
-        cleanup();
-        reject(new Error('官方网站响应超时 (>25s)，请检查官方服务器状态或网络'));
-      }
-    }, 25000);
-
-    try {
-      // 2. 创建静默后台标签页 (active: false，用户完全无感)
-      silentTab = await chrome.tabs.create({
-        url: TARGET_PPO_URL,
-        active: false
-      });
-      addLog('🌐 创建静默标签页', `Tab ID: ${silentTab.id} (active: false, 处于后台真实渲染)`);
-
-      const rawPassport = resolvePassportForQuery(queryData);
-      const rawNum = convertQueryDigits(String(queryData.platenum || queryData.plateNum || '').trim(), queryData.numeralMode || 'latin');
-      const letters = [queryData.letter1, queryData.letter2, queryData.letter3].filter(Boolean).join(' ');
-      const fullPlate = `${letters} ${rawNum}`.trim() || '埃及车辆';
-      const isPassport = queryData.ownerType !== 'national_id';
-
-      // 阶段一：等待表单加载就绪并执行 DOM 填入与提交
-      const tryFillAndSubmitForm = async () => {
-        if (formSubmitted || isSubmitting || isFinished) return;
-        isSubmitting = true;
-        
-        try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: silentTab.id },
-            args: [{
-              letter1: queryData.letter1 || '',
-              letter2: queryData.letter2 || '',
-              letter3: queryData.letter3 || '',
-              platenum: rawNum,
-              ownerType: queryData.ownerType || 'passport',
-              foreignType: queryData.foreignType || 'foreign',
-              country: queryData.country || '10206',
-              passportNo: rawPassport,
-              nationalId: convertQueryDigits(String(queryData.nationalId || ''), queryData.numeralMode || 'latin')
-            }],
-            func: (data) => {
-              const letterInput = document.getElementById('P14_LETER_1');
-              if (!letterInput) {
-                // 尝试切换到车辆违章选项卡
-                const vehicleTab = Array.from(document.querySelectorAll('a, button, li')).find(el => 
-                  el.innerText && el.innerText.includes('مخالفات رخص المركبات')
-                );
-                if (vehicleTab) {
-                  try { vehicleTab.click(); } catch(e){}
-                }
-                return { ready: false };
-              }
-
-              // 选中字母+数字单选
-              const radios = document.querySelectorAll('input[name="P14_CHOSE_OPTION"]');
-              radios.forEach(r => {
-                if (r.value === '1') {
-                  r.checked = true;
-                  r.dispatchEvent(new Event('click', { bubbles: true }));
-                  r.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-              });
-
-              // 填入字母与数字
-              const setVal = (id, val) => {
-                const el = document.getElementById(id);
-                if (el) {
-                  if (window.apex && window.apex.item && window.apex.item(id)) {
-                    try { window.apex.item(id).setValue(val); } catch(e){}
-                  }
-                  el.value = val;
-                  el.dispatchEvent(new Event('input', { bubbles: true }));
-                  el.dispatchEvent(new Event('change', { bubbles: true }));
-                  el.dispatchEvent(new Event('blur', { bubbles: true }));
-                }
-              };
-
-              setVal('P14_LETER_1', data.letter1);
-              setVal('P14_LETER_2', data.letter2);
-              setVal('P14_LETER_3', data.letter3);
-              setVal('P14_NUMBER_WITH_LETTER', data.platenum);
-
-              // 证件类型
-              const isPass = data.ownerType !== 'national_id';
-              const idRadios = document.querySelectorAll('input[name="P14_ID_TYPE_NUMS_LETTERS"]');
-              idRadios.forEach(r => {
-                if (r.value === (isPass ? '1429' : '2153')) {
-                  r.checked = true;
-                  r.dispatchEvent(new Event('click', { bubbles: true }));
-                  r.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-              });
-
-              if (isPass) {
-                // 外籍 / 埃及本国
-                const forRadios = document.querySelectorAll('input[name="P14_ISFOREIGN__NUMS_LETTERS"]');
-                forRadios.forEach(r => {
-                  if (r.value === (data.foreignType === 'citizen' ? '0' : '1')) {
-                    r.checked = true;
-                    r.dispatchEvent(new Event('click', { bubbles: true }));
-                    r.dispatchEvent(new Event('change', { bubbles: true }));
-                  }
-                });
-
-                // 国籍
-                const countrySelect = document.getElementById('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS');
-                if (countrySelect) {
-                  countrySelect.value = data.country || '10206';
-                  countrySelect.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-
-                // 按配置中已验证的格式提交护照号
-                setVal('P14_PASSPORT_NUM_NUMS_LETTERS', data.passportNo);
-              } else {
-                setVal('P14_NATIONAL_ID_NUMS_LETTERS', data.nationalId);
-              }
-
-              // 点击查询按钮
-              const submitBtn = document.getElementById('GET_FIN_LETTER_NUMBERS_BTN') || document.querySelector("button[id*='GET_FIN']");
-              if (submitBtn) {
-                submitBtn.click();
-                return { ready: true, submitted: true };
-              }
-
-              return { ready: true, submitted: false };
-            }
-          });
-
-          if (results && results[0] && results[0].result && results[0].result.submitted) {
-            formSubmitted = true;
-            addLog('✅ 表单填入提交', `已成功在静默标签页填入 [${fullPlate}] 并点击查询按钮`);
-            addLog('⏳ 等待官方响应', '正在等待官方 APEX 数据库计算并渲染结果页...');
-          } else {
-            isSubmitting = false;
-          }
-        } catch (err) {
-          isSubmitting = false;
-        }
-      };
-
-      // 阶段二：轮询检查结果页渲染
-      const checkAndScrapeResults = async () => {
-        if (!formSubmitted || isFinished || isScraping) return;
-        isScraping = true;
-
-        try {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: silentTab.id },
-            func: () => {
-              const pageText = document.body ? document.body.innerText || '' : '';
-              let totalFine = '';
-              let violationCount = '';
-              let reconcileFine = '';
-
-              const allDivs = Array.from(document.querySelectorAll('div, span, td'));
-              allDivs.forEach(el => {
-                const text = el.innerText?.trim() || '';
-                if (text === 'اجمالي الغرامات الشاملة') {
-                  const parent = el.closest('.t-Region, div') || el.parentElement;
-                  if (parent) {
-                    const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
-                    if (matches) totalFine = matches[0].trim();
-                  }
-                } else if (text === 'عدد المخالفات') {
-                  const parent = el.closest('.t-Region, div') || el.parentElement;
-                  if (parent) {
-                    const matches = parent.innerText.match(/[\d\u0660-\u0669]+/);
-                    if (matches) violationCount = matches[0].trim();
-                  }
-                } else if (text === 'إجمالى غرامات التصالح' || text === 'اجمالي غرامات التصالح') {
-                  const parent = el.closest('.t-Region, div') || el.parentElement;
-                  if (parent) {
-                    const matches = parent.innerText.match(/[\d\u0660-\u0669,.]+(\s*(جنيه|EGP))?/);
-                    if (matches) reconcileFine = matches[0].trim();
-                  }
-                }
-              });
-
-              if (!totalFine) {
-                const m = pageText.match(/اجمالي الغرامات الشاملة[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
-                if (m) totalFine = m[1].replace(/\n/g, ' ').trim();
-              }
-              if (!violationCount) {
-                const m = pageText.match(/عدد المخالفات[\s\S]*?([\d\u0660-\u0669]+)/);
-                if (m) violationCount = m[1].trim();
-              }
-              if (!reconcileFine) {
-                const m = pageText.match(/إجمالى غرامات التصالح[\s\S]*?([\d\u0660-\u0669,.]+\s*(جنيه|EGP)?)/);
-                if (m) reconcileFine = m[1].replace(/\n/g, ' ').trim();
-              }
-
-              const hasSummaryHeader = pageText.includes('بيانات المخالفات') || pageText.includes('بيانات التراخيص والمخالفات');
-              const isExplicitClean = pageText.includes('لا توجد مخالفات') || pageText.includes('لا توجد بيانات');
-
-              if (totalFine || violationCount || (hasSummaryHeader && isExplicitClean)) {
-                return {
-                  ready: true,
-                  totalFine: totalFine || '0 جنيه',
-                  violationCount: violationCount || '0',
-                  reconcileFine: reconcileFine || '0 جنيه',
-                  rawSnapshot: pageText.slice(0, 2000)
-                };
-              }
-              return { ready: false, rawSnapshot: pageText.slice(0, 500) };
-            }
-          });
-
-          if (!isFinished && results && results[0] && results[0].result && results[0].result.ready) {
-            isFinished = true;
-            const scraped = results[0].result;
-            const durationMs = Date.now() - startTime;
-
-            addLog('🎉 抓取成功', `总罚款: ${scraped.totalFine} | 违章笔数: ${scraped.violationCount} 笔 | 和解金额: ${scraped.reconcileFine}`);
-            addLog('⏱️ 总耗时', `${durationMs} ms`);
-
-            const formattedLog = [
-              `=======================================================`,
-              `📡 [真实浏览器静默后台渲染与全程过程追踪报告]`,
-              `=======================================================`,
-              `1. 查询车辆: ${fullPlate}`,
-              `2. 证件信息: ${isPassport ? '护照' : '身份证'} - ${rawPassport || queryData.nationalId}`,
-              `3. 最终抓取结果:`,
-              `   • 总罚款: ${scraped.totalFine}`,
-              `   • 违章笔数: ${scraped.violationCount} 笔`,
-              `   • 和解金额: ${scraped.reconcileFine}`,
-              `   • 总耗时: ${durationMs} ms`,
-              `-------------------------------------------------------`,
-              `4. ⚡ 毫秒级全程执行轨迹 (Trace Logs):`,
-              `-------------------------------------------------------`,
-              ...traceLogs,
-              `-------------------------------------------------------`,
-              `5. 📄 官方页面原始抓取快照:`,
-              `-------------------------------------------------------`,
-              scraped.rawSnapshot || '(无文本快照)'
-            ].join('\n');
-
-            const finalResult = {
-              totalFine: scraped.totalFine,
-              violationCount: scraped.violationCount,
-              reconcileFine: scraped.reconcileFine,
-              time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-              latencyMs: durationMs,
-              isDirectApi: false,
-              isSilentRender: true,
-              rawDiagnosticLog: formattedLog
-            };
-
-            saveQueryToHistory(queryData, finalResult, fullPlate);
-            handleShowResultNotification(finalResult, fullPlate);
-            cleanup();
-            resolve(finalResult);
-          }
-        } catch (err) {
-          addLog('⚠️ 结果探测异常', err?.message || '本轮抓取未完成，将继续等待');
-        } finally {
-          isScraping = false;
-        }
-      };
-
-      // 启动智能自适应轮询
-      pollInterval = setInterval(() => {
-        if (!formSubmitted) {
-          tryFillAndSubmitForm();
-        } else {
-          checkAndScrapeResults();
-        }
-      }, 500);
-
-    } catch (err) {
-      cleanup();
-      reject(err);
-    }
   });
 }
 
@@ -482,7 +111,7 @@ function saveQueryToHistory(req, scraped, fullPlate) {
           passportFormat: req.passportFormat || (/^[A-Za-z]/.test(req.passportNo || '') ? 'raw' : 'cleaned'),
           nationalId: req.nationalId || '',
           numeralMode: req.numeralMode || 'latin',
-          profileName: req.remark || (scraped.isDirectApi ? '极速直连查询' : '网页即时查询'),
+          profileName: req.remark || '网页即时查询',
           rawRequestJson: JSON.stringify(req, null, 2)
         },
         result: {
@@ -491,7 +120,7 @@ function saveQueryToHistory(req, scraped, fullPlate) {
           reconcileFine: scraped.reconcileFine || '0 جنيه',
           time: scraped.time || new Date().toLocaleTimeString(),
           latencyMs: scraped.latencyMs || (store.pendingPpoTask?.timestamp ? (Date.now() - store.pendingPpoTask.timestamp) : 1500),
-          rawResponseText: scraped.rawDiagnosticLog || `[${scraped.isDirectApi ? 'APEX协议极速直连' : '后台智能抓取'}]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}\n耗时: ${scraped.latencyMs || (store.pendingPpoTask?.timestamp ? `${Date.now() - store.pendingPpoTask.timestamp}` : '1500')}ms`
+          rawResponseText: scraped.rawDiagnosticLog || `[网页智能抓取]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}\n耗时: ${scraped.latencyMs || (store.pendingPpoTask?.timestamp ? `${Date.now() - store.pendingPpoTask.timestamp}` : '1500')}ms`
         }
       };
       historyList.unshift(newRecord);
@@ -623,7 +252,7 @@ function handleShowResultNotification(scraped, fullPlate) {
   } catch (e) {}
 }
 
-// 4. 监听标签页 URL 变化：智能抓取结果页数据 (仅作为传统网页模式的兜底抓取)
+// 4. 监听标签页 URL 变化：智能抓取结果页数据
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete') return;
   const currentUrl = tab.url || changeInfo.url || '';
@@ -712,8 +341,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// 5. 传统网页模式任务调度
-function dispatchQueryTask(queryData) {
+// 5. 网页查询任务调度
+function dispatchQueryTask(queryData, autoSubmit = true) {
   const taskPayload = {
     data: {
       letter1: queryData.letter1 || '',
@@ -729,7 +358,7 @@ function dispatchQueryTask(queryData) {
       passportFormat: queryData.passportFormat || (/^[A-Za-z]/.test(queryData.passportNo || queryData.passport || '') ? 'raw' : 'cleaned'),
       nationalId: String(queryData.nationalId || '')
     },
-    autoSubmit: true,
+    autoSubmit: autoSubmit,
     timestamp: Date.now()
   };
 
@@ -746,7 +375,7 @@ function dispatchQueryTask(queryData) {
             chrome.tabs.sendMessage(ppoTab.id, {
               action: 'direct_fill',
               data: taskPayload.data,
-              autoSubmit: true
+              autoSubmit: autoSubmit
             }, () => {
               if (chrome.runtime.lastError) {
                 chrome.tabs.update(ppoTab.id, { url: TARGET_PPO_URL });
@@ -761,24 +390,8 @@ function dispatchQueryTask(queryData) {
   });
 }
 
-// 统一对外查询调度入口 (根据用户偏好模式分发)
+// 统一对外查询调度入口
 function handleOpenAndFill(data, autoSubmit, sendResponse) {
-  chrome.storage.local.get(['ppo_traffic_query_mode'], (res) => {
-    const mode = res.ppo_traffic_query_mode || 'tab_ui'; // 默认：网页前台稳定模式
-
-    if (mode === 'direct') {
-      executeSilentTabQuery(data)
-        .then((scraped) => {
-          if (sendResponse) sendResponse({ success: true, mode: 'direct', data: scraped });
-        })
-        .catch((err) => {
-          console.warn('[Silent Render Failed, falling back to visible Web UI mode]:', err);
-          dispatchQueryTask(data);
-          if (sendResponse) sendResponse({ success: true, mode: 'tab_ui', fallback: true, message: err.message });
-        });
-    } else {
-      dispatchQueryTask(data);
-      if (sendResponse) sendResponse({ success: true, mode: 'tab_ui' });
-    }
-  });
+  dispatchQueryTask(data || {}, autoSubmit);
+  if (sendResponse) sendResponse({ success: true, mode: 'tab_ui' });
 }

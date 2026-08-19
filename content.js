@@ -846,27 +846,38 @@
     const ownerType = data.ownerType || 'passport';
 
     if (ownerType === 'passport') {
+      // 1. 强制切换官方单选为「جواز سفر (护照)」
       setRadioValue('P14_ID_TYPE_NUMS_LETTERS', '1429');
 
+      // 2. 强制切换官方单选为「أجنبي (外籍)」
       const isForeign = data.foreignType !== 'citizen';
       setRadioValue('P14_ISFOREIGN__NUMS_LETTERS', isForeign ? '1' : '0');
 
+      // 3. 选择签发国籍为「中国 10206」
       const countryVal = data.country || '10206';
       setSelectValue('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS', countryVal);
 
-      const rawPassport = data.passportNo || '';
+      // 4. 填入护照号码 (自适应格式)
+      const rawPassport = (data.passportNo || '').trim();
       let passportToFill = rawPassport;
 
       if (data.passportFormat === 'raw') {
-        passportToFill = rawPassport; // 学习记录：使用带前缀字母的原版护照 (如 EC2891946)
+        passportToFill = rawPassport; // 学习记录：使用带前缀字母的原版护照 (如 EF2891946)
       } else if (data.passportFormat === 'cleaned') {
         passportToFill = cleanPassportNumber(rawPassport); // 学习记录：使用纯数字护照 (如 2891946)
       } else {
+        // 首次默认先尝试纯数字，若报错自动触发原版带字母重试
         passportToFill = cleanPassportNumber(rawPassport) || rawPassport;
       }
 
       const finalPassport = window.NumberUtils ? window.NumberUtils.convert(passportToFill, data.numeralMode || numeralMode) : passportToFill;
       setFieldValue('P14_PASSPORT_NUM_NUMS_LETTERS', finalPassport);
+
+      // APEX 动态显示延迟双重填入保障 (确保动态展示后值不丢失)
+      setTimeout(() => {
+        setFieldValue('P14_PASSPORT_NUM_NUMS_LETTERS', finalPassport);
+        setSelectValue('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS', countryVal);
+      }, 250);
 
     } else if (ownerType === 'national_id') {
       setRadioValue('P14_ID_TYPE_NUMS_LETTERS', '2153');
@@ -874,6 +885,10 @@
       const rawId = data.nationalId || '';
       const convertedId = window.NumberUtils ? window.NumberUtils.convert(rawId, data.numeralMode || numeralMode) : rawId;
       setFieldValue('P14_NATIONAL_ID_NUMS_LETTERS', convertedId);
+
+      setTimeout(() => {
+        setFieldValue('P14_NATIONAL_ID_NUMS_LETTERS', convertedId);
+      }, 250);
     }
 
     showToast('✅ 成功一键填入表单！');
@@ -889,19 +904,13 @@
         } else {
           showToast('⚠️ 请手动点击「إجمالى المخالفات」查询', true);
         }
-      }, 400);
+      }, 600);
     }
   }
 
   function setFieldValue(id, value) {
     const el = document.getElementById(id);
     if (!el) return;
-
-    if (window.apex && window.apex.item && window.apex.item(id)) {
-      try {
-        window.apex.item(id).setValue(value);
-      } catch (e) {}
-    }
 
     el.value = value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -911,7 +920,9 @@
 
   function setRadioValue(groupName, value) {
     const targetVal = String(value);
-    const radios = document.querySelectorAll(`input[name="${groupName}"]`);
+
+    // 1. 通过 input 查找并点击
+    const radios = document.querySelectorAll(`input[name="${groupName}"]:not(#ppo-autofill-container *)`);
     radios.forEach(radio => {
       if (radio.value === targetVal) {
         radio.checked = true;
@@ -923,13 +934,37 @@
         if (label) {
           try { label.click(); } catch(e) {}
         }
+      } else {
+        radio.checked = false;
       }
     });
 
-    if (window.apex && window.apex.item && window.apex.item(groupName)) {
-      try {
-        window.apex.item(groupName).setValue(targetVal);
-      } catch (e) {}
+    // 2. 通过官方原生 Label 文本做深度穿透点击 (确保触发 APEX 动态动作)
+    if (groupName === 'P14_ID_TYPE_NUMS_LETTERS') {
+      if (targetVal === '1429') {
+        const passportLabels = Array.from(document.querySelectorAll('label')).filter(l => 
+          !l.closest('#ppo-autofill-container') && l.innerText && l.innerText.trim().includes('جواز سفر')
+        );
+        passportLabels.forEach(l => {
+          try { l.click(); } catch(e){}
+        });
+      } else if (targetVal === '2153') {
+        const nidLabels = Array.from(document.querySelectorAll('label')).filter(l => 
+          !l.closest('#ppo-autofill-container') && l.innerText && l.innerText.trim().includes('رقم قوم')
+        );
+        nidLabels.forEach(l => {
+          try { l.click(); } catch(e){}
+        });
+      }
+    } else if (groupName === 'P14_ISFOREIGN__NUMS_LETTERS') {
+      if (targetVal === '1') {
+        const foreignLabels = Array.from(document.querySelectorAll('label')).filter(l => 
+          !l.closest('#ppo-autofill-container') && l.innerText && l.innerText.trim().includes('أجنبي')
+        );
+        foreignLabels.forEach(l => {
+          try { l.click(); } catch(e){}
+        });
+      }
     }
   }
 

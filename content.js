@@ -635,7 +635,10 @@
     });
   }
 
+  let currentPassportFormat = 'raw';
+
   function getFormDataFromUI() {
+    const rawPass = (document.getElementById('ppo-in-passport-no')?.value || '').trim();
     return {
       letter1: document.getElementById('ppo-in-letter1')?.value || '',
       letter2: document.getElementById('ppo-in-letter2')?.value || '',
@@ -645,7 +648,8 @@
       ownerType: document.querySelector('input[name="ppo_owner_type"]:checked')?.value || 'passport',
       foreignType: document.querySelector('input[name="ppo_foreign_type"]:checked')?.value || 'foreign',
       country: document.getElementById('ppo-in-country')?.value || '10206',
-      passportNo: document.getElementById('ppo-in-passport-no')?.value || '',
+      passportNo: rawPass,
+      passportFormat: currentPassportFormat || (/^[A-Za-z]/.test(rawPass) ? 'raw' : 'cleaned'),
       nationalId: document.getElementById('ppo-in-national-id')?.value || ''
     };
   }
@@ -862,12 +866,12 @@
       let passportToFill = rawPassport;
 
       if (data.passportFormat === 'raw') {
-        passportToFill = rawPassport; // 学习记录：使用带前缀字母的原版护照 (如 EF2891946)
+        passportToFill = rawPassport; // 明确指定为原版：直接使用带前缀字母 (如 EF2891946)
       } else if (data.passportFormat === 'cleaned') {
-        passportToFill = cleanPassportNumber(rawPassport); // 学习记录：使用纯数字护照 (如 2891946)
+        passportToFill = cleanPassportNumber(rawPassport); // 明确指定为纯数字 (如 2891946)
       } else {
-        // 首次默认先尝试纯数字，若报错自动触发原版带字母重试
-        passportToFill = cleanPassportNumber(rawPassport) || rawPassport;
+        // 如果未特别指定，若输入的护照包含字母，则直接以原版带字母提交；若报错会自动切换纯数字重试
+        passportToFill = rawPassport;
       }
 
       const finalPassport = window.NumberUtils ? window.NumberUtils.convert(passportToFill, data.numeralMode || numeralMode) : passportToFill;
@@ -1876,6 +1880,22 @@
     }
   }
 
+  function updatePassportHint(pass, format) {
+    const hintEl = document.getElementById('ppo-passport-hint');
+    if (!hintEl) return;
+    const raw = (pass || document.getElementById('ppo-in-passport-no')?.value || '').trim();
+    if (!raw) {
+      hintEl.innerHTML = `💡 提示：系统已具备自学习记忆能力，将自动为您使用并记忆该车辆在交警库中生效的护照格式。`;
+      return;
+    }
+    const isRaw = format === 'raw' || (/^[A-Za-z]/.test(raw) && format !== 'cleaned');
+    if (isRaw) {
+      hintEl.innerHTML = `🏷️ 护照提交格式: <strong style="color:#60a5fa;">🔤 完整原版 [${raw}]</strong> (查询将直接使用此格式一次性命中)`;
+    } else {
+      hintEl.innerHTML = `🏷️ 护照提交格式: <strong style="color:#34d399;">🔢 去前缀纯数字 [${cleanPassportNumber(raw)}]</strong> (查询将使用纯数字格式提交)`;
+    }
+  }
+
   function renderProfileDropdown(list) {
     const dropdown = document.getElementById('ppo-profile-dropdown');
     if (!dropdown) return;
@@ -1886,8 +1906,10 @@
       const opt = document.createElement('option');
       opt.value = item.id;
       const titleText = item.remark || item.passportNo || item.platenum || '未命名配置';
-      opt.textContent = `👤 ${titleText}`;
-      opt.title = `${titleText} (护照: ${item.passportNo || '无'} / 车牌: ${item.platenum || '无'})`;
+      const isRaw = item.passportFormat === 'raw' || /^[A-Za-z]/.test(item.passportNo || '');
+      const formatTag = item.ownerType === 'national_id' ? ' [🆔身份证]' : (isRaw ? ' [🔤带字母]' : ' [🔢纯数字]');
+      opt.textContent = `👤 ${titleText}${formatTag}`;
+      opt.title = `${titleText} (护照: ${item.passportNo || '无'} / 格式: ${isRaw ? '带字母原版' : '纯数字'})`;
       if (item.id === currentProfileId) {
         opt.selected = true;
       }
@@ -1982,6 +2004,7 @@
     currentProfileId = profile.id;
     chrome.storage.local.set({ [LAST_ACTIVE_KEY]: profile.id });
 
+    currentPassportFormat = profile.passportFormat || (/^[A-Za-z]/.test(profile.passportNo || '') ? 'raw' : 'cleaned');
     setFormDataToUI(profile);
 
     const profileDropdown = document.getElementById('ppo-profile-dropdown');
@@ -1990,6 +2013,7 @@
     const updateBtn = document.getElementById('ppo-btn-update-profile');
     if (updateBtn) updateBtn.style.display = 'inline-flex';
 
+    updatePassportHint(profile.passportNo, currentPassportFormat);
     showToast(`👤 已载入配置: ${profile.remark}`);
   }
 

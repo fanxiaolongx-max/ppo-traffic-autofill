@@ -460,8 +460,16 @@ function renderTableView() {
       statusHtml = '<span class="status-badge clean">✅ 无违章</span>';
     }
 
+    let passFormatBadge = '';
+    if (rec.request?.ownerType === 'passport') {
+      const isRaw = rec.request?.passportFormat === 'raw' || /^[A-Za-z]/.test(rec.request?.passportNo || '');
+      passFormatBadge = isRaw 
+        ? `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3);">🔤带字母原版</span>`
+        : `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">🔢纯数字</span>`;
+    }
+
     const idLabel = rec.request?.ownerType === 'passport' 
-      ? `护照: ${rec.request?.passportNo || '-'}` 
+      ? `护照: ${rec.request?.passportNo || '-'} ${passFormatBadge}` 
       : `埃及ID: ${rec.request?.nationalId || '-'}`;
     const countryLabel = rec.request?.countryName || (rec.request?.country === '10206' ? '中国' : rec.request?.country || '');
 
@@ -529,8 +537,16 @@ function renderCardsView() {
       statusHtml = '<span class="status-badge clean">✅ 无违章</span>';
     }
 
+    let passFormatBadge = '';
+    if (rec.request?.ownerType === 'passport') {
+      const isRaw = rec.request?.passportFormat === 'raw' || /^[A-Za-z]/.test(rec.request?.passportNo || '');
+      passFormatBadge = isRaw 
+        ? `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3);">🔤带字母</span>`
+        : `<span style="display:inline-block; margin-left:4px; padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">🔢纯数字</span>`;
+    }
+
     const idLabel = rec.request?.ownerType === 'passport' 
-      ? `护照: ${rec.request?.passportNo || '-'}` 
+      ? `护照: ${rec.request?.passportNo || '-'} ${passFormatBadge}` 
       : `ID: ${rec.request?.nationalId || '-'}`;
 
     return `
@@ -1023,6 +1039,12 @@ function renderProfilesManagerUI(list) {
     const num = item.platenum || '-';
     const idVal = item.passportNo || item.nationalId || '未填证件';
     const isPassport = item.ownerType !== 'national_id';
+    const isRaw = item.passportFormat === 'raw' || /^[A-Za-z]/.test(item.passportNo || '');
+    const formatBadge = isPassport 
+      ? (isRaw 
+          ? `<span style="padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3); margin-left:4px;">🔤带字母原版</span>` 
+          : `<span style="padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); margin-left:4px;">🔢纯数字</span>`)
+      : `<span style="padding:1px 5px; font-size:10px; border-radius:4px; background:rgba(234,179,8,0.15); color:#facc15; border:1px solid rgba(234,179,8,0.3); margin-left:4px;">🆔身份证</span>`;
 
     return `
       <div class="card-row" style="padding: 12px 16px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
@@ -1032,7 +1054,7 @@ function renderProfilesManagerUI(list) {
             <div style="font-weight: 700; color: #fff; font-size: 14px;">${item.remark || '未命名配置'}</div>
             <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
               车牌: <strong style="color: var(--primary-gold);">${letters} ${num}</strong> · 
-              ${isPassport ? '护照' : '身份证'}: <span>${idVal}</span>
+              ${isPassport ? '护照' : '身份证'}: <span>${idVal}</span> ${formatBadge}
             </div>
           </div>
         </div>

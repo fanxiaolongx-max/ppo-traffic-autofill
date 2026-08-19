@@ -357,7 +357,10 @@ function bindEvents() {
   });
 }
 
+let currentPassportFormat = 'raw';
+
 function getFormData() {
+  const rawPass = document.getElementById('ppo-in-passport-no')?.value || '';
   return {
     letter1: document.getElementById('ppo-in-letter1')?.value || '',
     letter2: document.getElementById('ppo-in-letter2')?.value || '',
@@ -367,7 +370,8 @@ function getFormData() {
     ownerType: document.querySelector('input[name="ppo_owner_type"]:checked')?.value || 'passport',
     foreignType: document.querySelector('input[name="ppo_foreign_type"]:checked')?.value || 'foreign',
     country: document.getElementById('ppo-in-country')?.value || '10206',
-    passportNo: document.getElementById('ppo-in-passport-no')?.value || '',
+    passportNo: rawPass,
+    passportFormat: currentPassportFormat || (/^[A-Za-z]/.test(rawPass) ? 'raw' : 'cleaned'),
     nationalId: document.getElementById('ppo-in-national-id')?.value || ''
   };
 }
@@ -632,8 +636,10 @@ function renderProfileDropdown(list) {
     const opt = document.createElement('option');
     opt.value = item.id;
     const titleText = item.remark || item.passportNo || item.platenum || '未命名配置';
-    opt.textContent = `👤 ${titleText}`;
-    opt.title = `${titleText} (护照: ${item.passportNo || '无'} / 车牌: ${item.platenum || '无'})`;
+    const isRaw = item.passportFormat === 'raw' || /^[A-Za-z]/.test(item.passportNo || '');
+    const formatTag = item.ownerType === 'national_id' ? ' [🆔身份证]' : (isRaw ? ' [🔤带字母]' : ' [🔢纯数字]');
+    opt.textContent = `👤 ${titleText}${formatTag}`;
+    opt.title = `${titleText} (护照: ${item.passportNo || '无'} / 格式: ${isRaw ? '带字母原版' : '纯数字'})`;
     if (item.id === currentProfileId) {
       opt.selected = true;
     }
@@ -759,6 +765,7 @@ function applyProfileObj(profile) {
     countrySelect.value = profile.country || '10206';
   }
 
+  currentPassportFormat = profile.passportFormat || (/^[A-Za-z]/.test(profile.passportNo || '') ? 'raw' : 'cleaned');
   document.getElementById('ppo-in-passport-no').value = profile.passportNo || '';
   document.getElementById('ppo-in-national-id').value = profile.nationalId || '';
 

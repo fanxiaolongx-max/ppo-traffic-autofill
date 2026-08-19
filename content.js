@@ -910,18 +910,25 @@
   }
 
   function setRadioValue(groupName, value) {
+    const targetVal = String(value);
     const radios = document.querySelectorAll(`input[name="${groupName}"]`);
     radios.forEach(radio => {
-      if (radio.value === value) {
+      if (radio.value === targetVal) {
         radio.checked = true;
-        radio.dispatchEvent(new Event('click', { bubbles: true }));
+        try { radio.click(); } catch(e) {}
+        radio.dispatchEvent(new Event('input', { bubbles: true }));
         radio.dispatchEvent(new Event('change', { bubbles: true }));
+
+        const label = document.querySelector(`label[for="${radio.id}"]`);
+        if (label) {
+          try { label.click(); } catch(e) {}
+        }
       }
     });
 
     if (window.apex && window.apex.item && window.apex.item(groupName)) {
       try {
-        window.apex.item(groupName).setValue(value);
+        window.apex.item(groupName).setValue(targetVal);
       } catch (e) {}
     }
   }
@@ -1198,17 +1205,20 @@
       const passInput = document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS');
       const currentValOnPage = passInput ? passInput.value.trim() : '';
 
-      if (isMismatchError && !hasRetriedPassportAlternative && rawPass && rawPass !== cleanedPass && passInput) {
+      if (isMismatchError && !hasRetriedPassportAlternative && rawPass && rawPass !== cleanedPass) {
         hasRetriedPassportAlternative = true;
         
         let nextPassToTry = '';
+        let nextFormat = '';
         let switchMsg = '';
-        if (currentValOnPage === cleanedPass || currentValOnPage.replace(/\D/g, '') === cleanedPass) {
-          nextPassToTry = rawPass; // 切换为带前缀字母的原版护照 (如 EC2891946)
-          switchMsg = `🔄 纯数字护照未匹配，正在自动切换为带前缀字母原版 [${rawPass}] 再次重试...`;
+        if (currentValOnPage === cleanedPass || currentValOnPage.replace(/\D/g, '') === cleanedPass || !currentValOnPage) {
+          nextPassToTry = rawPass; // 切换为带前缀字母的原版护照 (如 EF2891946)
+          nextFormat = 'raw';
+          switchMsg = `🔄 纯数字护照未匹配，正在自动切换为带字母原版护照 [${rawPass}] 重新查询...`;
         } else {
           nextPassToTry = cleanedPass; // 切换为纯数字护照 (如 2891946)
-          switchMsg = `🔄 带字母护照未匹配，正在自动去除前缀字母 [${cleanedPass}] 再次重试...`;
+          nextFormat = 'cleaned';
+          switchMsg = `🔄 带字母护照未匹配，正在自动去除前缀字母 [${cleanedPass}] 重新查询...`;
         }
 
         showToast(switchMsg, false);
@@ -1222,18 +1232,17 @@
         }
         removeBlockingOverlays(true);
 
-        // 2. 填入备选护照格式并重新提交查询
+        // 2. 重新调用 doFillOperations 重新填表并提交
+        const retryData = {
+          ...req,
+          ownerType: 'passport',
+          passportNo: nextPassToTry,
+          passportFormat: nextFormat
+        };
+
         setTimeout(() => {
-          setFieldValue('P14_PASSPORT_NUM_NUMS_LETTERS', nextPassToTry);
-          setTimeout(() => {
-            const submitBtn = document.getElementById('GET_FIN_LETTER_NUMBERS_BTN') || 
-                              document.querySelector("button[id*='GET_FIN']");
-            if (submitBtn) {
-              startQueryWatchdog();
-              submitBtn.click();
-            }
-          }, 350);
-        }, 500);
+          doFillOperations(retryData, true);
+        }, 400);
         return;
       }
 

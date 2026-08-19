@@ -663,8 +663,8 @@ function refillAndQueryRecord(rec) {
     numeralMode: req.numeralMode || 'latin',
     ownerType: req.ownerType || 'passport',
     foreignType: req.foreignType || 'foreign',
-    country: req.country || '10206',
     passportNo: req.passportNo || '',
+    passportFormat: req.passportFormat || (/^[A-Za-z]/.test(req.passportNo || '') ? 'raw' : 'cleaned'),
     nationalId: req.nationalId || '',
     remark: req.profileName || '历史记录再次查询'
   };

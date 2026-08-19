@@ -855,9 +855,17 @@
       setSelectValue('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS', countryVal);
 
       const rawPassport = data.passportNo || '';
-      const cleanedPassport = cleanPassportNumber(rawPassport);
-      const finalPassport = window.NumberUtils ? window.NumberUtils.convert(cleanedPassport, data.numeralMode || numeralMode) : cleanedPassport;
-      
+      let passportToFill = rawPassport;
+
+      if (data.passportFormat === 'raw') {
+        passportToFill = rawPassport; // 学习记录：使用带前缀字母的原版护照 (如 EC2891946)
+      } else if (data.passportFormat === 'cleaned') {
+        passportToFill = cleanPassportNumber(rawPassport); // 学习记录：使用纯数字护照 (如 2891946)
+      } else {
+        passportToFill = cleanPassportNumber(rawPassport) || rawPassport;
+      }
+
+      const finalPassport = window.NumberUtils ? window.NumberUtils.convert(passportToFill, data.numeralMode || numeralMode) : passportToFill;
       setFieldValue('P14_PASSPORT_NUM_NUMS_LETTERS', finalPassport);
 
     } else if (ownerType === 'national_id') {
@@ -1433,7 +1441,88 @@
     });
     saveQueryHistoryRecord('has_fine', res, officialSnapshot.slice(0, 3000));
 
+    // 智能学习并自动保存/更新到常用配置库 (记住本次成功的护照格式)
+    autoLearnAndSaveProfileOnSuccess(req);
+
     showToast(`🎉 已成功获取罚款信息：总计 ${res.totalFine} (${res.violationCount} 笔违章)`);
+  }
+
+  // 自动将本次查询成功的车辆与对应生效护照格式（纯数字 vs 带字母原版）更新或存入常用配置库
+  function autoLearnAndSaveProfileOnSuccess(req) {
+    if (!req || (!req.platenum && !req.letter1)) return;
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+
+    const platenum = (req.platenum || '').trim();
+    const l1 = (req.letter1 || '').trim();
+    const l2 = (req.letter2 || '').trim();
+    const l3 = (req.letter3 || '').trim();
+    const letters = [l1, l2, l3].filter(Boolean).join(' ');
+    const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
+
+    // 获取官方页面表单上实际生效的护照号
+    const passInput = document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS');
+    const winningPass = (passInput ? passInput.value.trim() : '') || (req.passportNo || '').trim();
+    const isRawLetter = /^[A-Za-z]/.test(winningPass);
+    const winningFormat = isRawLetter ? 'raw' : 'cleaned';
+    const rawPass = (req.passportNo || '').trim() || winningPass;
+
+    chrome.storage.local.get([STORAGE_KEY, LAST_ACTIVE_KEY], (store) => {
+      let list = store[STORAGE_KEY] || [];
+      let updated = false;
+
+      // 寻找是否已存在相同车牌的配置
+      let profile = list.find(p => p.id === currentProfileId) || 
+                    list.find(p => p.platenum === platenum && p.letter1 === l1 && p.letter2 === l2);
+
+      if (profile) {
+        profile.passportNo = winningPass;
+        profile.rawPassportNo = rawPass;
+        profile.passportFormat = winningFormat;
+        profile.letter1 = l1;
+        profile.letter2 = l2;
+        profile.letter3 = l3;
+        profile.platenum = platenum;
+        profile.ownerType = req.ownerType || 'passport';
+        profile.country = req.country || '10206';
+        profile.numeralMode = req.numeralMode || numeralMode;
+        if (req.nationalId) profile.nationalId = req.nationalId;
+        updated = true;
+      } else {
+        const newId = 'prof_' + Date.now() + Math.random().toString(36).substr(2, 4);
+        const defaultRemark = req.remark || `${winningPass ? winningPass + ' ' : ''}(${platenum})`;
+        profile = {
+          id: newId,
+          remark: defaultRemark,
+          letter1: l1,
+          letter2: l2,
+          letter3: l3,
+          platenum: platenum,
+          numeralMode: req.numeralMode || numeralMode,
+          ownerType: req.ownerType || 'passport',
+          foreignType: req.foreignType || 'foreign',
+          country: req.country || '10206',
+          passportNo: winningPass,
+          rawPassportNo: rawPass,
+          passportFormat: winningFormat,
+          nationalId: req.nationalId || ''
+        };
+        list.push(profile);
+        updated = true;
+      }
+
+      if (updated) {
+        currentProfileId = profile.id;
+        chrome.storage.local.set({
+          [STORAGE_KEY]: list,
+          [LAST_ACTIVE_KEY]: profile.id
+        }, () => {
+          if (typeof chrome.storage.sync !== 'undefined') {
+            try { chrome.storage.sync.set({ [STORAGE_KEY]: list, [LAST_ACTIVE_KEY]: profile.id }, () => {}); } catch(e){}
+          }
+          renderProfilesDropdown(list);
+        });
+      }
+    });
   }
 
   let activeQueryData = null;
@@ -1529,7 +1618,9 @@
           foreignType: req?.foreignType || 'foreign',
           country: req?.country || '10206',
           countryName: countryName,
-          passportNo: req?.passportNo || '',
+          passportNo: (document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS')?.value.trim()) || req?.passportNo || '',
+          rawPassportNo: req?.passportNo || '',
+          passportFormat: /^[A-Za-z]/.test((document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS')?.value.trim()) || req?.passportNo || '') ? 'raw' : 'cleaned',
           nationalId: req?.nationalId || '',
           numeralMode: req?.numeralMode || numeralMode,
           profileName: req?.remark || (currentProfileId ? '已存配置' : '手动输入'),

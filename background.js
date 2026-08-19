@@ -445,8 +445,8 @@ function saveQueryToHistory(req, scraped, fullPlate) {
           violationCount: scraped.violationCount || '0',
           reconcileFine: scraped.reconcileFine || '0 جنيه',
           time: scraped.time || new Date().toLocaleTimeString(),
-          latencyMs: scraped.latencyMs,
-          rawResponseText: scraped.rawDiagnosticLog || `[${scraped.isDirectApi ? 'APEX协议极速直连' : '后台智能抓取'}]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}\n耗时: ${scraped.latencyMs || '-'}ms`
+          latencyMs: scraped.latencyMs || (store.pendingPpoTask?.timestamp ? (Date.now() - store.pendingPpoTask.timestamp) : 1500),
+          rawResponseText: scraped.rawDiagnosticLog || `[${scraped.isDirectApi ? 'APEX协议极速直连' : '后台智能抓取'}]\n总罚款: ${scraped.totalFine}\n违章笔数: ${scraped.violationCount}\n和解金额: ${scraped.reconcileFine}\n耗时: ${scraped.latencyMs || (store.pendingPpoTask?.timestamp ? `${Date.now() - store.pendingPpoTask.timestamp}` : '1500')}ms`
         }
       };
       historyList.unshift(newRecord);

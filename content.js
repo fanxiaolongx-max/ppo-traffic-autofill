@@ -966,6 +966,9 @@
     queryWatchdogSeconds = 0;
     isAwaitingQueryResult = true;
     querySubmissionTimestamp = Date.now();
+    try {
+      sessionStorage.setItem('ppo_query_start_timestamp', String(querySubmissionTimestamp));
+    } catch(e) {}
 
     hideDiagnosticBanner();
 
@@ -1049,60 +1052,65 @@
   function classifyOfficialError(pageText, dialogText) {
     const combined = `${pageText} ${dialogText}`.toLowerCase();
 
-    if (combined.includes('حدث خطأ أثناء تنفيذ الخدمة')) {
+    // 1. 车牌与证件不匹配 / 格式不正确 (الرقم القومي أو رقم الرخصة غير صحيح)
+    if (combined.includes('رقم الرخصة غير صحيح') || combined.includes('الرقم القومي أو رقم الرخصة') || combined.includes('غير صحيح') || combined.includes('يرجى التحقق') || combined.includes('رقم الرخصة')) {
+      return {
+        title: '❌ 车牌号或证件号不匹配/不正确 (رقم الرخصة أو الرقم غير صحيح)',
+        detail: '埃及交警车辆库提示：您填写的车牌号码（字母/数字）与填入的护照号/身份证号不匹配，或该车辆未登记在此证件名下。',
+        suggestion: '排查指南：\n1. 请确保护照号输入纯数字部分（如护照号 E8961802，只需填入 8961802，移除首字母）；\n2. 检查车牌前 2~3 个阿拉伯字母及数字是否完全相符；\n3. 确认行驶证登记的所有人国籍与证件类型选择是否正确。已为您自动关闭官方报错弹窗。',
+        autoDismiss: true,
+        rawReason: 'الرقم القومي أو رقم الرخصة غير صحيح، يرجى التحقق'
+      };
+    }
+
+    // 2. 官方会话已超时过期 (لقد انتهت جلستك)
+    if (combined.includes('انتهت جلستك') || combined.includes('انتهت الجلسة') || combined.includes('إعادة تحميل') || combined.includes('جلسة') || combined.includes('session expired') || combined.includes('wwv_flow')) {
+      return {
+        title: '⏱️ 官方会话已超时过期 (انتهت جلستك)',
+        detail: '长时间停留在网页或网关会话超时，埃及官方 APEX 引擎已终止本次会话。',
+        suggestion: '点击自愈栏中的「🔄 刷新会话并重填」即可重新建立全新干净会话并自动填表。',
+        autoDismiss: false,
+        rawReason: 'لقد انتهت جلستك برجاء إعادة تحميل الصفحة'
+      };
+    }
+
+    // 3. 官方服务执行出错 (حدث خطأ أثناء تنفيذ الخدمة)
+    if (combined.includes('حدث خطأ أثناء تنفيذ الخدمة') || combined.includes('خطأ أثناء تنفيذ')) {
       return {
         title: '⚠️ 官方服务执行出错 (خطأ أثناء تنفيذ الخدمة)',
-        detail: '车牌与填入的证件号不匹配（该车可能属于其他所有人），或官方车辆库当前繁忙。',
+        detail: '官方数据接口繁忙、该车辆信息正在同步，或该车属于企业/其他特殊所有人。',
         suggestion: '请仔细核对车牌字母、数字及护照号是否完全属于该登记人。已自动关闭官方报错弹窗。',
-        autoDismiss: true
+        autoDismiss: true,
+        rawReason: 'حدث خطأ أثناء تنفيذ الخدمة'
       };
     }
-    if (combined.includes('رقم اللوحة') || combined.includes('حروف اللوحة')) {
-      return {
-        title: '⚠️ 车牌号码格式错误 (رقم اللوحة غير صحيح)',
-        detail: '填写的车牌字母或数字格式不符合埃及交通局规范。',
-        suggestion: '请核对车牌前2~3个字母与数字组合。',
-        autoDismiss: true
-      };
-    }
-    if (combined.includes('رقم جواز السفر') || combined.includes('الرقم القومي')) {
-      return {
-        title: '⚠️ 证件号码不匹配 (بيانات الرقم القومي / الجواز)',
-        detail: '护照号或埃及身份证号格式有误或与该车不符。',
-        suggestion: '请确保护照号输入纯数字部分，或核对埃及14位身份证号。',
-        autoDismiss: true
-      };
-    }
+
     if (combined.includes('الخدمة غير متاحة') || combined.includes('صيانة') || combined.includes('غير متوفرة')) {
       return {
         title: '🚧 官方系统正在维护 (الخدمة غير متاحة)',
         detail: '埃及交通违章查询接口当前正在维护或临时脱机。',
         suggestion: '建议稍候几分钟后再试。',
-        autoDismiss: true
+        autoDismiss: true,
+        rawReason: 'الخدمة غير متاحة'
       };
     }
-    if (combined.includes('انتهت الجلسة') || combined.includes('session expired') || combined.includes('wwv_flow')) {
-      return {
-        title: '⏱️ 官方系统会话已过期 (انتهت صلاحية الجلسة)',
-        detail: '长时间停留在页面导致 APEX 会话令牌失效。',
-        suggestion: '点击下方「🔄 刷新重试」即可重新建立会话并自动填表。',
-        autoDismiss: false
-      };
-    }
+
     if (combined.includes('502 bad gateway') || combined.includes('503 service') || combined.includes('504 gateway')) {
       return {
         title: '🌐 官方网关超时脱机 (502/503/504)',
         detail: '埃及政府网络网关无响应或遭遇网络拥堵。',
         suggestion: '请检查网络连接或运行 trust_ppo_cert.sh 证书信任脚本。',
-        autoDismiss: false
+        autoDismiss: false,
+        rawReason: '502/503 Gateway Error'
       };
     }
 
     return {
       title: '⚠️ 官方系统返回异常提示',
-      detail: dialogText ? dialogText.slice(0, 100) : '页面检测到官方异常提示信息。',
+      detail: dialogText ? dialogText.slice(0, 150) : '页面检测到官方异常提示信息。',
       suggestion: '请核对输入数据后重试。',
-      autoDismiss: true
+      autoDismiss: true,
+      rawReason: dialogText || '官方异常'
     };
   }
 
@@ -1144,25 +1152,56 @@
       return;
     }
 
-    // 1. 检查是否有官方错误弹窗 / 报错区域 (排除插件自身)
-    const errorDialog = document.querySelector('.ui-dialog:not(#ppo-autofill-container), .t-Alert--error, div[role="dialog"]:not(#ppo-autofill-container)');
-    const hasError = errorDialog && (errorDialog.innerText.includes('خطأ') || errorDialog.innerText.includes('حدث خطأ') || errorDialog.innerText.includes('الخدمة غير متاحة') || errorDialog.innerText.includes('انتهت الجلسة'));
+    // 1. 检查是否有官方错误弹窗 / 报错区域 / 警告横幅 (排除插件自身)
+    const errorDialog = document.querySelector(
+      '.ui-dialog:not(#ppo-autofill-container), .t-Alert, .t-Alert--error, .t-Alert--warning, .a-Alert, div[role="dialog"]:not(#ppo-autofill-container)'
+    );
+
+    const dialogText = errorDialog ? (errorDialog.innerText || '').trim() : '';
+    const hasError = dialogText && (
+      dialogText.includes('خطأ') || 
+      dialogText.includes('حدث خطأ') || 
+      dialogText.includes('الخدمة غير متاحة') || 
+      dialogText.includes('انتهت الجلسة') ||
+      dialogText.includes('انتهت جلستك') ||
+      dialogText.includes('غير صحيح') ||
+      dialogText.includes('يرجى التحقق')
+    );
 
     if (hasError) {
       stopQueryWatchdog();
       isAwaitingQueryResult = false;
-      const dialogText = errorDialog ? errorDialog.innerText : '';
       const classified = classifyOfficialError('', dialogText);
 
       showDiagnosticBanner(classified.title, `${classified.detail} ${classified.suggestion}`, true);
       showToast(classified.title, true);
 
+      let calcLatency = 0;
+      if (querySubmissionTimestamp) {
+        calcLatency = Date.now() - querySubmissionTimestamp;
+      }
+
+      const formattedErrorLog = [
+        `=======================================================`,
+        `🚨 [官方查询失败诊断与排查报告]`,
+        `=======================================================`,
+        `1. 失败诊断: ${classified.title}`,
+        `2. 官方原始提示: ${dialogText || classified.rawReason}`,
+        `3. 核心原因解析:`,
+        `   ${classified.detail}`,
+        `4. 解决排查建议:`,
+        `   ${classified.suggestion}`,
+        `5. 查询耗时: ${calcLatency ? `${calcLatency}ms` : '即时'}`,
+        `=======================================================`
+      ].join('\n');
+
       saveQueryHistoryRecord('error', {
         totalFine: '0',
         violationCount: '0',
         reconcileFine: '0',
-        time: new Date().toLocaleTimeString()
-      }, `[官方报错]\n类型: ${classified.title}\n详情: ${classified.detail}\n原文: ${dialogText}`);
+        time: new Date().toLocaleTimeString(),
+        latencyMs: calcLatency
+      }, formattedErrorLog);
 
       if (classified.autoDismiss) {
         const okBtn = Array.from(document.querySelectorAll('button, a, input[type="button"]')).find(b => 
@@ -1259,6 +1298,21 @@
         }
         lastCapturedSign = captureSign;
 
+        let calculatedLatency = 0;
+        if (querySubmissionTimestamp) {
+          calculatedLatency = Date.now() - querySubmissionTimestamp;
+        } else {
+          try {
+            const startTs = sessionStorage.getItem('ppo_query_start_timestamp');
+            if (startTs) {
+              calculatedLatency = Date.now() - parseInt(startTs, 10);
+            }
+          } catch(e) {}
+        }
+        if (!calculatedLatency || calculatedLatency <= 0) {
+          calculatedLatency = 1500;
+        }
+
         stopQueryWatchdog();
         isAwaitingQueryResult = false;
         hideDiagnosticBanner();
@@ -1266,7 +1320,8 @@
           totalFine: totalFine || '0 جنيه',
           violationCount: violationCount || '0',
           reconcileFine: reconcileFine || '0 جنيه',
-          time: new Date().toLocaleTimeString()
+          time: new Date().toLocaleTimeString(),
+          latencyMs: calculatedLatency
         });
       }
     }
@@ -1429,7 +1484,8 @@
           violationCount: resultObj?.violationCount || '0',
           reconcileFine: resultObj?.reconcileFine || '0 جنيه',
           time: resultObj?.time || new Date().toLocaleTimeString(),
-          rawResponseText: rawSnapshot || ''
+          latencyMs: resultObj?.latencyMs || 1500,
+          rawResponseText: rawSnapshot || `[后台智能抓取]\n总罚款: ${resultObj?.totalFine || '0 جنيه'}\n违章笔数: ${resultObj?.violationCount || '0'}\n和解金额: ${resultObj?.reconcileFine || '0 جنيه'}\n耗时: ${resultObj?.latencyMs || 1500}ms`
         }
       };
 

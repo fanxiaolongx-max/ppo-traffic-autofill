@@ -756,6 +756,8 @@
     hasRetriedPassportAlternative = false;
     try {
       sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
+      sessionStorage.setItem('ppo_retry_count', '0'); // 重置重试计数为 0
+      document.querySelectorAll('[data-ppo-processed]').forEach(el => el.removeAttribute('data-ppo-processed'));
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         chrome.storage.local.set({ ppo_active_query_req: activeQueryData });
       }
@@ -1219,10 +1221,14 @@
   function checkAndScrapeResults() {
     const isSummaryPage = window.location.href.includes('traffic-fines-summary');
     
-    // 1. 检查是否有官方错误弹窗 / 报错区域 / 警告横幅 (排除插件自身)
+    // 1. 检查是否有官方错误弹窗 / 报错区域 / 警告横幅 (排除插件自身，且排除已处理过的弹窗)
     const errorDialog = document.querySelector(
       '.ui-dialog:not(#ppo-autofill-container), .t-Alert, .t-Alert--error, .t-Alert--warning, .a-Alert, div[role="dialog"]:not(#ppo-autofill-container)'
     );
+
+    if (errorDialog && errorDialog.getAttribute('data-ppo-processed') === 'true') {
+      return;
+    }
 
     const dialogText = errorDialog ? (errorDialog.innerText || '').trim() : '';
     const hasError = dialogText && (
@@ -1245,7 +1251,7 @@
       isAwaitingQueryResult = false;
       const classified = classifyOfficialError('', dialogText);
 
-      // 智能双模容错重试：如果是证件不匹配，且护照原版包含字母，自动切换格式重试 1 次 (跨页面刷新状态持久化)
+      // 智能双模容错重试：单次查询严格限制最多尝试 2 遍 (第 1 遍 + 容错重试 1 遍)
       const isMismatchError = dialogText.includes('غير صحيح') || dialogText.includes('يرجى التحقق');
       let req = activeQueryData;
       if (!req) {
@@ -1259,7 +1265,7 @@
       const cleanedPass = cleanPassportNumber(rawPass);
       const retryCount = parseInt(sessionStorage.getItem('ppo_retry_count') || '0', 10);
 
-      // 只要 rawPass 和 cleanedPass 存在差异（含有前缀字母），且是第 0 次失败，执行对称切换重试
+      // 只要 rawPass 和 cleanedPass 存在差异（含有前缀字母），且是第 0 次失败，执行唯一 1 次对称切换重试
       if (isMismatchError && retryCount === 0 && rawPass && rawPass !== cleanedPass) {
         sessionStorage.setItem('ppo_retry_count', '1');
         sessionStorage.setItem('ppo_is_awaiting_query', 'true');
@@ -1278,11 +1284,11 @@
         if (wasFirstAttemptRaw) {
           nextPassToTry = cleanedPass;
           nextFormat = 'cleaned';
-          switchMsg = `🔄 带字母原版 [${rawPass}] 未匹配，正在自动去除前缀字母 [${cleanedPass}] 重新查询...`;
+          switchMsg = `🔄 带字母原版 [${rawPass}] 未匹配，正在自动去除前缀字母 [${cleanedPass}] 重新查询 (第 2/2 次尝试)...`;
         } else {
           nextPassToTry = rawPass;
           nextFormat = 'raw';
-          switchMsg = `🔄 纯数字护照 [${cleanedPass}] 未匹配，正在自动切换为带字母原版 [${rawPass}] 重新查询...`;
+          switchMsg = `🔄 纯数字护照 [${cleanedPass}] 未匹配，正在自动切换为带字母原版 [${rawPass}] 重新查询 (第 2/2 次尝试)...`;
         }
 
         showToast(switchMsg, false);
@@ -1312,8 +1318,12 @@
         return;
       }
 
+      // 已经达到最大尝试次数 (2 次) 或不可重试的错误：彻底停止，永不循环
       sessionStorage.removeItem('ppo_is_awaiting_query');
-      sessionStorage.removeItem('ppo_retry_count');
+      sessionStorage.setItem('ppo_retry_count', '2'); // 锁定为 2，防止后续 DOM 监听再次触发
+      if (errorDialog) {
+        errorDialog.setAttribute('data-ppo-processed', 'true');
+      }
 
       showDiagnosticBanner(classified.title, `${classified.detail} ${classified.suggestion}`, true);
       showToast(classified.title, true);

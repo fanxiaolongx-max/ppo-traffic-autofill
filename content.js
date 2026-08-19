@@ -1018,6 +1018,7 @@
     isAwaitingQueryResult = true;
     querySubmissionTimestamp = Date.now();
     try {
+      sessionStorage.setItem('ppo_is_awaiting_query', 'true');
       sessionStorage.setItem('ppo_query_start_timestamp', String(querySubmissionTimestamp));
     } catch(e) {}
 
@@ -1199,11 +1200,6 @@
   function checkAndScrapeResults() {
     const isSummaryPage = window.location.href.includes('traffic-fines-summary');
     
-    // 严格限制：仅在真正到达官方结果摘要页或正在主动等待查询结果时才执行抓取
-    if (!isSummaryPage && !isAwaitingQueryResult) {
-      return;
-    }
-
     // 1. 检查是否有官方错误弹窗 / 报错区域 / 警告横幅 (排除插件自身)
     const errorDialog = document.querySelector(
       '.ui-dialog:not(#ppo-autofill-container), .t-Alert, .t-Alert--error, .t-Alert--warning, .a-Alert, div[role="dialog"]:not(#ppo-autofill-container)'
@@ -1220,12 +1216,17 @@
       dialogText.includes('يرجى التحقق')
     );
 
+    // 严格限制：仅在到达官方结果摘要页、正在等待查询结果、或页面上明确浮现官方报错弹窗时才执行
+    if (!isSummaryPage && !isAwaitingQueryResult && !hasError) {
+      return;
+    }
+
     if (hasError) {
       stopQueryWatchdog();
       isAwaitingQueryResult = false;
       const classified = classifyOfficialError('', dialogText);
 
-      // 智能双模容错重试：如果是证件不匹配，且护照原版包含字母，自动切换格式重试 1 次 (纯数字 vs 带字母原版)
+      // 智能双模容错重试：如果是证件不匹配，且护照原版包含字母，自动切换格式重试 1 次 (跨页面刷新状态持久化)
       const isMismatchError = dialogText.includes('غير صحيح') || dialogText.includes('يرجى التحقق');
       let req = activeQueryData;
       if (!req) {
@@ -1235,26 +1236,17 @@
         } catch (e) {}
       }
 
-      const rawPass = req?.passportNo || '';
+      const rawPass = (req?.passportNo || '').trim();
       const cleanedPass = cleanPassportNumber(rawPass);
-      const passInput = document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS');
-      const currentValOnPage = passInput ? passInput.value.trim() : '';
+      const retryCount = parseInt(sessionStorage.getItem('ppo_retry_count') || '0', 10);
 
-      if (isMismatchError && !hasRetriedPassportAlternative && rawPass && rawPass !== cleanedPass) {
-        hasRetriedPassportAlternative = true;
+      if (isMismatchError && retryCount === 0 && rawPass && rawPass !== cleanedPass) {
+        sessionStorage.setItem('ppo_retry_count', '1');
+        sessionStorage.setItem('ppo_is_awaiting_query', 'true');
         
-        let nextPassToTry = '';
-        let nextFormat = '';
-        let switchMsg = '';
-        if (currentValOnPage === cleanedPass || currentValOnPage.replace(/\D/g, '') === cleanedPass || !currentValOnPage) {
-          nextPassToTry = rawPass; // 切换为带前缀字母的原版护照 (如 EF2891946)
-          nextFormat = 'raw';
-          switchMsg = `🔄 纯数字护照未匹配，正在自动切换为带字母原版护照 [${rawPass}] 重新查询...`;
-        } else {
-          nextPassToTry = cleanedPass; // 切换为纯数字护照 (如 2891946)
-          nextFormat = 'cleaned';
-          switchMsg = `🔄 带字母护照未匹配，正在自动去除前缀字母 [${cleanedPass}] 重新查询...`;
-        }
+        let nextPassToTry = rawPass; // 切换为带前缀字母的原版护照 (如 EF2891946)
+        let nextFormat = 'raw';
+        let switchMsg = `🔄 纯数字护照未匹配，正在自动切换为带字母原版护照 [${rawPass}] 重新查询...`;
 
         showToast(switchMsg, false);
 
@@ -1274,12 +1266,16 @@
           passportNo: nextPassToTry,
           passportFormat: nextFormat
         };
+        sessionStorage.setItem('ppo_active_query_req', JSON.stringify(retryData));
 
         setTimeout(() => {
           doFillOperations(retryData, true);
-        }, 400);
+        }, 500);
         return;
       }
+
+      sessionStorage.removeItem('ppo_is_awaiting_query');
+      sessionStorage.removeItem('ppo_retry_count');
 
       showDiagnosticBanner(classified.title, `${classified.detail} ${classified.suggestion}`, true);
       showToast(classified.title, true);
@@ -2089,7 +2085,20 @@
 
   function initApp() {
     createFloatingUI();
-    // 保持静默零干扰：不主动打断官方 APEX 的正常异步组件初始化
+
+    // 恢复查询与自动重试生命周期状态 (支持官方整页刷新后的状态接续)
+    const storedAwaiting = sessionStorage.getItem('ppo_is_awaiting_query');
+    if (storedAwaiting === 'true') {
+      isAwaitingQueryResult = true;
+      try {
+        const cached = sessionStorage.getItem('ppo_active_query_req');
+        if (cached) activeQueryData = JSON.parse(cached);
+      } catch(e) {}
+      startQueryWatchdog();
+      setTimeout(() => {
+        checkAndScrapeResults();
+      }, 500);
+    }
   }
 
   if (document.readyState === 'loading') {

@@ -756,6 +756,7 @@
     const data = formData || getFormDataFromUI();
 
     activeQueryData = { ...data };
+    hasRetriedPassportAlternative = false;
     try {
       sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
@@ -1143,6 +1144,7 @@
   let lastCapturedSign = '';
   let lastSavedRecordFingerprint = '';
   let lastSavedRecordTimestamp = 0;
+  let hasRetriedPassportAlternative = false;
 
   function checkAndScrapeResults() {
     const isSummaryPage = window.location.href.includes('traffic-fines-summary');
@@ -1172,6 +1174,60 @@
       stopQueryWatchdog();
       isAwaitingQueryResult = false;
       const classified = classifyOfficialError('', dialogText);
+
+      // 智能双模容错重试：如果是证件不匹配，且护照原版包含字母，自动切换格式重试 1 次 (纯数字 vs 带字母原版)
+      const isMismatchError = dialogText.includes('غير صحيح') || dialogText.includes('يرجى التحقق');
+      let req = activeQueryData;
+      if (!req) {
+        try {
+          const cached = sessionStorage.getItem('ppo_active_query_req');
+          if (cached) req = JSON.parse(cached);
+        } catch (e) {}
+      }
+
+      const rawPass = req?.passportNo || '';
+      const cleanedPass = cleanPassportNumber(rawPass);
+      const passInput = document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS');
+      const currentValOnPage = passInput ? passInput.value.trim() : '';
+
+      if (isMismatchError && !hasRetriedPassportAlternative && rawPass && rawPass !== cleanedPass && passInput) {
+        hasRetriedPassportAlternative = true;
+        
+        let nextPassToTry = '';
+        let switchMsg = '';
+        if (currentValOnPage === cleanedPass || currentValOnPage.replace(/\D/g, '') === cleanedPass) {
+          nextPassToTry = rawPass; // 切换为带前缀字母的原版护照 (如 EC2891946)
+          switchMsg = `🔄 纯数字护照未匹配，正在自动切换为带前缀字母原版 [${rawPass}] 再次重试...`;
+        } else {
+          nextPassToTry = cleanedPass; // 切换为纯数字护照 (如 2891946)
+          switchMsg = `🔄 带字母护照未匹配，正在自动去除前缀字母 [${cleanedPass}] 再次重试...`;
+        }
+
+        showToast(switchMsg, false);
+
+        // 1. 关闭官方报错弹窗并解除遮罩
+        const okBtn = Array.from(document.querySelectorAll('button, a, input[type="button"]')).find(b => 
+          !b.closest('#ppo-autofill-container') && b.innerText && (b.innerText.includes('موافق') || b.innerText.includes('Close') || b.innerText.includes('OK') || b.innerText.includes('إغلاق'))
+        );
+        if (okBtn) {
+          try { okBtn.click(); } catch(e){}
+        }
+        removeBlockingOverlays(true);
+
+        // 2. 填入备选护照格式并重新提交查询
+        setTimeout(() => {
+          setFieldValue('P14_PASSPORT_NUM_NUMS_LETTERS', nextPassToTry);
+          setTimeout(() => {
+            const submitBtn = document.getElementById('GET_FIN_LETTER_NUMBERS_BTN') || 
+                              document.querySelector("button[id*='GET_FIN']");
+            if (submitBtn) {
+              startQueryWatchdog();
+              submitBtn.click();
+            }
+          }, 350);
+        }, 500);
+        return;
+      }
 
       showDiagnosticBanner(classified.title, `${classified.detail} ${classified.suggestion}`, true);
       showToast(classified.title, true);

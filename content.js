@@ -837,6 +837,11 @@
   }
 
   function doFillOperations(data, autoSubmit) {
+    activeQueryData = { ...data };
+    try {
+      sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
+    } catch(e) {}
+
     setRadioValue('P14_CHOSE_OPTION', '1');
 
     const rawNum = data.platenum || '';
@@ -1240,17 +1245,35 @@
         } catch (e) {}
       }
 
-      const rawPass = (req?.passportNo || '').trim();
+      const rawPass = (req?.rawPassportNo || req?.passportNo || '').trim();
       const cleanedPass = cleanPassportNumber(rawPass);
       const retryCount = parseInt(sessionStorage.getItem('ppo_retry_count') || '0', 10);
 
+      // 只要 rawPass 和 cleanedPass 存在差异（含有前缀字母），且是第 0 次失败，执行对称切换重试
       if (isMismatchError && retryCount === 0 && rawPass && rawPass !== cleanedPass) {
         sessionStorage.setItem('ppo_retry_count', '1');
         sessionStorage.setItem('ppo_is_awaiting_query', 'true');
         
-        let nextPassToTry = rawPass; // 切换为带前缀字母的原版护照 (如 EF2891946)
-        let nextFormat = 'raw';
-        let switchMsg = `🔄 纯数字护照未匹配，正在自动切换为带字母原版护照 [${rawPass}] 重新查询...`;
+        let nextPassToTry = '';
+        let nextFormat = '';
+        let switchMsg = '';
+
+        // 判断第 1 次使用的是哪种格式：
+        // 如果第 1 遍是带字母原版 (raw) -> 第 2 遍切为去头纯数字 (cleaned)
+        // 如果第 1 遍是去头纯数字 (cleaned) -> 第 2 遍切为带字母原版 (raw)
+        const passEl = document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS');
+        const currentAttemptVal = (passEl ? passEl.value.trim() : '') || req?.passportNo || '';
+        const wasFirstAttemptRaw = req?.passportFormat === 'raw' || currentAttemptVal === rawPass || /^[A-Za-z]/.test(currentAttemptVal);
+
+        if (wasFirstAttemptRaw) {
+          nextPassToTry = cleanedPass;
+          nextFormat = 'cleaned';
+          switchMsg = `🔄 带字母原版 [${rawPass}] 未匹配，正在自动去除前缀字母 [${cleanedPass}] 重新查询...`;
+        } else {
+          nextPassToTry = rawPass;
+          nextFormat = 'raw';
+          switchMsg = `🔄 纯数字护照 [${cleanedPass}] 未匹配，正在自动切换为带字母原版 [${rawPass}] 重新查询...`;
+        }
 
         showToast(switchMsg, false);
 
@@ -1268,6 +1291,7 @@
           ...req,
           ownerType: 'passport',
           passportNo: nextPassToTry,
+          rawPassportNo: rawPass,
           passportFormat: nextFormat
         };
         sessionStorage.setItem('ppo_active_query_req', JSON.stringify(retryData));
@@ -1493,6 +1517,12 @@
 
   // 自动将本次查询成功的车辆与对应生效护照格式（纯数字 vs 带字母原版）更新或存入常用配置库
   function autoLearnAndSaveProfileOnSuccess(req) {
+    if (!req) {
+      try {
+        const cached = sessionStorage.getItem('ppo_active_query_req');
+        if (cached) req = JSON.parse(cached);
+      } catch (e) {}
+    }
     if (!req || (!req.platenum && !req.letter1)) return;
     if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
 
@@ -1503,18 +1533,18 @@
     const letters = [l1, l2, l3].filter(Boolean).join(' ');
     const fullPlate = `${letters} ${platenum}`.trim() || '埃及车辆';
 
-    // 获取官方页面表单上实际生效的护照号
+    // 获取官方页面表单上实际生效的护照号与模式
     const passInput = document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS');
     const winningPass = (passInput ? passInput.value.trim() : '') || (req.passportNo || '').trim();
-    const isRawLetter = /^[A-Za-z]/.test(winningPass);
+    const isRawLetter = /^[A-Za-z]/.test(winningPass) || req.passportFormat === 'raw';
     const winningFormat = isRawLetter ? 'raw' : 'cleaned';
-    const rawPass = (req.passportNo || '').trim() || winningPass;
+    const rawPass = (req.rawPassportNo || req.passportNo || '').trim() || winningPass;
 
     chrome.storage.local.get([STORAGE_KEY, LAST_ACTIVE_KEY], (store) => {
       let list = store[STORAGE_KEY] || [];
       let updated = false;
 
-      // 寻找是否已存在相同车牌的配置
+      // 寻找是否已存在相同车牌或相同 ID 的配置
       let profile = list.find(p => p.id === currentProfileId) || 
                     list.find(p => p.platenum === platenum && p.letter1 === l1 && p.letter2 === l2);
 
@@ -1556,14 +1586,10 @@
 
       if (updated) {
         currentProfileId = profile.id;
-        chrome.storage.local.set({
-          [STORAGE_KEY]: list,
-          [LAST_ACTIVE_KEY]: profile.id
-        }, () => {
-          if (typeof chrome.storage.sync !== 'undefined') {
-            try { chrome.storage.sync.set({ [STORAGE_KEY]: list, [LAST_ACTIVE_KEY]: profile.id }, () => {}); } catch(e){}
-          }
-          renderProfilesDropdown(list);
+        currentPassportFormat = winningFormat;
+        saveProfilesListPermanently(list, profile.id, () => {
+          renderProfileDropdown(list);
+          updatePassportHint(winningPass, winningFormat);
         });
       }
     });
@@ -1653,6 +1679,10 @@
       const countryObj = COUNTRY_OPTIONS.find(c => c.value === req?.country);
       const countryName = countryObj ? countryObj.text : (req?.country === '10206' ? 'الصين (中国 / China)' : (req?.country || '中国'));
 
+      const winningPass = req?.passportNo || (document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS')?.value.trim()) || '';
+      const winningFormat = req?.passportFormat || (/^[A-Za-z]/.test(winningPass) ? 'raw' : 'cleaned');
+      const rawPass = req?.rawPassportNo || winningPass;
+
       const historyRecord = {
         id: 'hist_' + now + '_' + Math.random().toString(36).substr(2, 6),
         timestamp: now,
@@ -1669,13 +1699,18 @@
           foreignType: req?.foreignType || 'foreign',
           country: req?.country || '10206',
           countryName: countryName,
-          passportNo: (document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS')?.value.trim()) || req?.passportNo || '',
-          rawPassportNo: req?.passportNo || '',
-          passportFormat: /^[A-Za-z]/.test((document.getElementById('P14_PASSPORT_NUM_NUMS_LETTERS')?.value.trim()) || req?.passportNo || '') ? 'raw' : 'cleaned',
+          passportNo: winningPass,
+          rawPassportNo: rawPass,
+          passportFormat: winningFormat,
           nationalId: req?.nationalId || '',
           numeralMode: req?.numeralMode || numeralMode,
           profileName: req?.remark || (currentProfileId ? '已存配置' : '手动输入'),
-          rawRequestJson: JSON.stringify(req || {}, null, 2)
+          rawRequestJson: JSON.stringify({
+            ...req,
+            passportNo: winningPass,
+            rawPassportNo: rawPass,
+            passportFormat: winningFormat
+          }, null, 2)
         },
         result: {
           totalFine: resultObj?.totalFine || '0 جنيه',

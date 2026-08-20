@@ -15,18 +15,27 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-export async function fetchLatestRelease(repository, fetchImpl = globalThis.fetch) {
+export async function fetchLatestRelease(repository, fetchImpl = globalThis.fetch, { token = '', manifestUrl = '' } = {}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('GitHub 仓库地址无效');
-  const response = await fetchImpl(`https://api.github.com/repos/${repository}/releases/latest`, {
+  const endpoint = manifestUrl || `https://api.github.com/repos/${repository}/releases/latest`;
+  const response = await fetchImpl(endpoint, {
     headers: {
       accept: 'application/vnd.github+json',
       'user-agent': 'ppo-query-hub-update-checker',
-      'x-github-api-version': '2022-11-28'
+      'x-github-api-version': '2022-11-28',
+      ...(token ? { authorization:`Bearer ${token}` } : {})
     },
     signal: AbortSignal.timeout(10_000)
   });
-  if (!response.ok) throw new Error(`GitHub 返回 HTTP ${response.status}`);
+  if (!response.ok) {
+    if (response.status === 404 && !token && !manifestUrl) {
+      throw new Error('GitHub 仓库为私有仓库，应用无法匿名读取 Release。请使用公开发布仓库，或配置 PPO_UPDATE_MANIFEST_URL。');
+    }
+    throw new Error(`更新服务器返回 HTTP ${response.status}`);
+  }
   const release = await response.json();
-  if (!release?.tag_name || !release?.html_url) throw new Error('GitHub Release 信息不完整');
-  return { version: String(release.tag_name).replace(/^v/i, ''), url: release.html_url };
+  const version = manifestUrl ? release?.version : release?.tag_name;
+  const url = manifestUrl ? release?.url : release?.html_url;
+  if (!version || !url) throw new Error('更新版本信息不完整');
+  return { version: String(version).replace(/^v/i, ''), url:String(url) };
 }

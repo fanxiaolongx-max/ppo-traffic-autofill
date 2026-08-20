@@ -64,7 +64,10 @@ async function checkForUpdates({ interactive = true } = {}) {
   checkingUpdate = true;
   rebuildTrayMenu();
   try {
-    const release = await fetchLatestRelease(REPOSITORY);
+    const release = await fetchLatestRelease(REPOSITORY, globalThis.fetch, {
+      token: process.env.PPO_GITHUB_TOKEN || '',
+      manifestUrl: process.env.PPO_UPDATE_MANIFEST_URL || ''
+    });
     const currentVersion = app.getVersion();
     if (compareVersions(release.version, currentVersion) > 0) {
       const result = await dialog.showMessageBox({
@@ -126,11 +129,46 @@ function rebuildTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate()));
 }
 
+function createMacTrayIcon() {
+  // macOS menu-bar icons must be monochrome template images with transparency.
+  // Draw a 2x raw bitmap directly. Packaged Electron builds do not reliably
+  // decode SVG data URLs in nativeImage, which previously made startup fail.
+  const width = 36;
+  const height = 36;
+  const bitmap = Buffer.alloc(width * height * 4);
+  const fillRect = (left, top, right, bottom) => {
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const offset = (y * width + x) * 4;
+        bitmap[offset + 3] = 255;
+      }
+    }
+  };
+  // Compact vehicle silhouette plus three status lamps.
+  fillRect(8, 15, 28, 25);
+  fillRect(11, 11, 25, 15);
+  fillRect(5, 19, 31, 25);
+  fillRect(8, 25, 14, 30);
+  fillRect(22, 25, 28, 30);
+  fillRect(8, 5, 12, 9);
+  fillRect(16, 5, 20, 9);
+  fillRect(24, 5, 28, 9);
+  const icon = nativeImage.createFromBitmap(bitmap, { width, height, scaleFactor: 2 });
+  icon.setTemplateImage(true);
+  return icon;
+}
+
 function createTray() {
   if (tray) return;
-  const iconPath = path.join(app.getAppPath(), 'assets', 'icon.icns');
-  let trayIcon = nativeImage.createFromPath(iconPath);
-  if (!trayIcon.isEmpty()) trayIcon = trayIcon.resize({ width: 18, height: 18 });
+  let trayIcon;
+  if (process.platform === 'darwin') {
+    trayIcon = createMacTrayIcon();
+  } else {
+    const iconPath = path.join(app.getAppPath(), 'assets', 'icon.icns');
+    trayIcon = nativeImage.createFromPath(iconPath);
+    if (!trayIcon.isEmpty()) trayIcon = trayIcon.resize({ width: 18, height: 18 });
+  }
+  if (trayIcon.isEmpty()) throw new Error('无法加载系统托盘图标');
   tray = new Tray(trayIcon);
   tray.setToolTip(`埃及车辆违章查询 · 端口 ${boundPort}`);
   tray.on('double-click', () => showMainWindow());

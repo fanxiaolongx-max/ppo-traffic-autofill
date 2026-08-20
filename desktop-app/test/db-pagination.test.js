@@ -103,10 +103,11 @@ test('stores searchable feedback, client geography and admin settings', () => {
   try {
     const store = new Store(directory);
     const createdAt = new Date().toISOString();
-    store.createFeedback({ id:'fb_test', deviceId:'device-feedback', sourceIp:'8.8.8.8', userAgent:'Mobile Safari', phone:'+20 100 123', wechat:'wx-test', content:'希望增加查询提示', pageUrl:'https://query.example.com/', createdAt });
+    store.createFeedback({ id:'fb_test', deviceId:'device-feedback', sourceIp:'8.8.8.8', userAgent:'Mobile Safari', phone:'+20 100 123', wechat:'wx-test', content:'希望增加查询提示', pageUrl:'https://query.example.com/', attachments:[{id:'file-1',name:'screen.png',mime:'image/png',size:100,storedName:'file-1.png'}], createdAt });
     store.setFeedbackGeo('fb_test', { country:'埃及', city:'开罗', isp:'Example ISP' });
     assert.equal(store.listFeedback({ query:'开罗' }).items[0].id, 'fb_test');
     assert.equal(store.listFeedback({ query:'device-feedback' }).total, 1);
+    assert.equal(store.getFeedback('fb_test').attachments[0].name, 'screen.png');
     assert.equal(store.feedbackStatistics().unread, 1);
     assert.equal(store.updateFeedback('fb_test', { status:'resolved', adminNote:'已处理' }).status, 'resolved');
     store.setSetting('example', { enabled:true });

@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { isIP } from 'node:net';
 import { config } from './config.js';
 import { Store } from './db.js';
 import { AuditLogger } from './logger.js';
@@ -13,6 +12,8 @@ import { parseOfficialSummary } from './result-parser.js';
 import { validateQueryPayload } from './validation.js';
 import { AdminAuth } from './admin-auth.js';
 import { IpGeoResolver } from './ip-geo.js';
+import { isTrustedProxyRequest, resolveClientIp } from './client-ip.js';
+import { decodeFeedbackAttachments, feedbackAttachmentPath, saveFeedbackAttachments } from './feedback-attachments.js';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.logDir, { recursive: true });
@@ -138,32 +139,25 @@ function json(response, status, body, headers = {}) {
   response.end(JSON.stringify(body));
 }
 
-async function body(request) {
-  let raw = '';
+async function body(request, { maxBytes = 32_768 } = {}) {
+  const chunks = [];
+  let bytes = 0;
   for await (const chunk of request) {
-    raw += chunk;
-    if (raw.length > 32_768) throw Object.assign(new Error('请求内容过大'), { statusCode: 413, code: 'BODY_TOO_LARGE' });
+    bytes += chunk.length;
+    if (bytes > maxBytes) throw Object.assign(new Error('请求内容过大'), { statusCode: 413, code: 'BODY_TOO_LARGE' });
+    chunks.push(chunk);
   }
+  const raw = Buffer.concat(chunks).toString('utf8');
   try { return JSON.parse(raw || '{}'); }
   catch { throw Object.assign(new Error('JSON 格式错误'), { statusCode: 400, code: 'INVALID_JSON' }); }
 }
 
 function clientIp(request) {
-  const normalize = value => {
-    const candidate = String(value || '').trim().replace(/^::ffff:/, '');
-    return isIP(candidate) ? candidate : 'unknown';
-  };
-  const remote = normalize(request.socket.remoteAddress);
-  const proxyTrusted = config.trustProxy && (
-    remote === '127.0.0.1' || remote === '::1' || config.trustedProxies.has(remote)
-  );
-  if (proxyTrusted) return normalize(String(request.headers['x-forwarded-for'] || '').split(',')[0].trim() || remote);
-  return remote;
+  return resolveClientIp(request, config);
 }
 
 function proxyTrusted(request) {
-  const remote = String(request.socket.remoteAddress || '').replace(/^::ffff:/, '');
-  return config.trustProxy && (remote === '127.0.0.1' || remote === '::1' || config.trustedProxies.has(remote));
+  return isTrustedProxyRequest(request, config);
 }
 
 function secureRequest(request) {
@@ -251,7 +245,7 @@ export const server = http.createServer(async (request, response) => {
   response.setHeader('x-content-type-options', 'nosniff');
   response.setHeader('x-frame-options', 'DENY');
   response.setHeader('referrer-policy', 'same-origin');
-  response.setHeader('content-security-policy', "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  response.setHeader('content-security-policy', "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
   response.setHeader('cross-origin-resource-policy', 'same-origin');
   try {
     if (request.method === 'OPTIONS') {
@@ -364,6 +358,23 @@ export const server = http.createServer(async (request, response) => {
       const item = store.getFeedback(adminFeedback[1]);
       return item ? json(response, 200, item) : json(response, 404, { error: { code: 'NOT_FOUND', message: '反馈不存在' } });
     }
+    const adminFeedbackAttachment = url.pathname.match(/^\/api\/v1\/admin\/feedback\/([^/]+)\/attachments\/([^/]+)$/);
+    if (request.method === 'GET' && adminFeedbackAttachment) {
+      requireAdmin(request);
+      const item = store.getFeedback(adminFeedbackAttachment[1]);
+      const attachment = item?.attachments?.find(candidate => candidate.id === adminFeedbackAttachment[2]);
+      const filePath = attachment && feedbackAttachmentPath(config.feedbackAttachmentDir, item.id, attachment.storedName);
+      if (!filePath || !fs.existsSync(filePath)) return json(response, 404, { error: { code:'NOT_FOUND', message:'附件不存在' } });
+      response.writeHead(200, {
+        'content-type': attachment.mime,
+        'content-length': String(fs.statSync(filePath).size),
+        'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
+        'cache-control': 'private, no-store',
+        'x-content-type-options': 'nosniff'
+      });
+      fs.createReadStream(filePath).pipe(response);
+      return;
+    }
     if (request.method === 'PATCH' && adminFeedback) {
       const context = requireAdmin(request);
       adminAuth.assertCsrf(request, context);
@@ -420,13 +431,21 @@ export const server = http.createServer(async (request, response) => {
         store.addServiceEvent('rate_limit', 'warning', rate.code, '意见反馈触发流控', { sourceIp: ip }, { force: true });
         return json(response, 429, { error: { code: rate.code, message: '反馈提交过于频繁，请稍后再试', retryAfterMs: rate.retryAfterMs } }, { 'retry-after': String(Math.ceil(rate.retryAfterMs / 1000)) });
       }
-      const input = cleanFeedback(await body(request));
+      const payload = await body(request, { maxBytes: Math.ceil(config.feedbackAttachmentMaxTotalBytes * 4 / 3) + 256_000 });
+      const input = cleanFeedback(payload);
+      const decodedAttachments = decodeFeedbackAttachments(payload.attachments, {
+        maxFiles: config.feedbackAttachmentMaxFiles,
+        maxFileBytes: config.feedbackAttachmentMaxFileBytes,
+        maxTotalBytes: config.feedbackAttachmentMaxTotalBytes
+      });
       const createdAt = new Date().toISOString();
+      const id = `fb_${crypto.randomUUID()}`;
+      const attachments = saveFeedbackAttachments(config.feedbackAttachmentDir, id, decodedAttachments);
       const item = store.createFeedback({
-        id: `fb_${crypto.randomUUID()}`, deviceId, sourceIp: ip,
+        id, deviceId, sourceIp: ip, attachments,
         userAgent: String(request.headers['user-agent'] || '').slice(0, 500), ...input, createdAt
       });
-      logger.info('feedback_submitted', { feedbackId: item.id, sourceIp: ip, deviceId, hasPhone: Boolean(input.phone), hasWechat: Boolean(input.wechat) });
+      logger.info('feedback_submitted', { feedbackId: item.id, sourceIp: ip, deviceId, hasPhone: Boolean(input.phone), hasWechat: Boolean(input.wechat), attachmentCount: attachments.length, attachmentBytes: attachments.reduce((sum, entry) => sum + entry.size, 0) });
       void geoResolver.lookup(ip).then(geo => store.setFeedbackGeo(item.id, geo));
       return json(response, 201, { id: item.id, message: '感谢反馈，我们已收到。' });
     }

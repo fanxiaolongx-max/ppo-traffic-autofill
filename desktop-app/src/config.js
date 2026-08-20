@@ -24,7 +24,9 @@ export const config = Object.freeze({
   portAutoIncrement: bool('PPO_PORT_AUTO_INCREMENT', true),
   publicBaseUrl: process.env.PPO_PUBLIC_BASE_URL || '',
   desktopToken: process.env.PPO_DESKTOP_TOKEN || '',
-  trustProxy: bool('PPO_TRUST_PROXY', false),
+  // Safe by default: forwarded IP headers are only accepted from loopback or an
+  // explicitly listed reverse proxy, never from a direct public/LAN client.
+  trustProxy: bool('PPO_TRUST_PROXY', true),
   trustedProxies: new Set((process.env.PPO_TRUSTED_PROXIES || '').split(',').map(v => v.trim()).filter(Boolean)),
   apiKeys: new Set((process.env.PPO_API_KEYS || '').split(',').map(v => v.trim()).filter(Boolean)),
   corsOrigins: new Set((process.env.PPO_CORS_ORIGINS || '').split(',').map(v => v.trim().replace(/\/$/, '')).filter(Boolean)),
@@ -54,6 +56,10 @@ export const config = Object.freeze({
   adminLoginWindowMs: integer('PPO_ADMIN_LOGIN_WINDOW_MS', 900_000, 60_000),
   feedbackPerHour: integer('PPO_FEEDBACK_PER_HOUR', 3, 1),
   feedbackPerDay: integer('PPO_FEEDBACK_PER_DAY', 10, 1),
+  feedbackAttachmentDir: path.resolve(process.env.PPO_FEEDBACK_ATTACHMENT_DIR || path.join(process.env.PPO_DATA_DIR || path.join(appRoot, 'data'), 'feedback-attachments')),
+  feedbackAttachmentMaxFiles: integer('PPO_FEEDBACK_ATTACHMENT_MAX_FILES', 3, 1),
+  feedbackAttachmentMaxFileBytes: integer('PPO_FEEDBACK_ATTACHMENT_MAX_FILE_BYTES', 5 * 1024 * 1024, 1024),
+  feedbackAttachmentMaxTotalBytes: integer('PPO_FEEDBACK_ATTACHMENT_MAX_TOTAL_BYTES', 10 * 1024 * 1024, 1024),
   ipGeoEnabled: bool('PPO_IP_GEO_ENABLED', true),
   ipGeoEndpoint: process.env.PPO_IP_GEO_ENDPOINT || 'https://ipwho.is',
   ipGeoTimeoutMs: integer('PPO_IP_GEO_TIMEOUT_MS', 3_000, 500),

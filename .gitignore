@@ -3,6 +3,7 @@
 dist/*.zip
 desktop-app/node_modules/
 desktop-app/dist/
+desktop-app/dist-*/
 desktop-app/data/
 desktop-app/logs/
 desktop-app/.env

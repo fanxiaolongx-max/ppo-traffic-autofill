@@ -105,7 +105,7 @@ Web 页面不需要账号密码。匿名查询默认受到以下保护：
 
 公网页面右上角的服务状态按钮可查看本程序服务、PPO 官网最近可用状态、24 小时查询成功率、队列使用量、流控次数及最近状态变化。状态记录只查询最近 24 小时，初始最多显示 20 条；存在更多记录时可点击“加载更多状态记录”，每次再读取 20 条，读取完毕后按钮自动隐藏。这里只提供聚合数据，不返回车牌、证件、IP、设备标识或追踪编号。
 
-使用 Nginx、Cloudflare Tunnel 等反向代理时，只有在设置 `PPO_TRUST_PROXY=true` 且连接来自本机或 `PPO_TRUSTED_PROXIES` 列出的精确代理 IP 时，程序才读取 `X-Forwarded-For`。不要把程序端口同时直接暴露到公网。
+使用 Nginx、Cloudflare Tunnel 等反向代理时，程序默认只在连接来自本机或 `PPO_TRUSTED_PROXIES` 列出的精确代理 IP 时读取 `CF-Connecting-IP`、`X-Real-IP`、`X-Forwarded-For` 或标准 `Forwarded`，查询和反馈会记录其中的真实客户端 IP。反向代理必须覆盖客户端传入的转发头，不能不加检查地原样追加；直连公网或局域网客户端伪造的转发头不会被信任。可设置 `PPO_TRUST_PROXY=false` 完全关闭此能力。
 
 ## 外部 API
 
@@ -140,7 +140,7 @@ X-Device-Id: 由调用方生成并持久保存的随机标识
 - `GET /api/v1/events`：SSE 实时状态
 - `GET /api/v1/health`：健康检查
 - `GET /api/v1/status`：公开的脱敏服务状态和 24 小时指标
-- `POST /api/v1/feedback`：提交建议反馈；`content` 必填，`phone`、`wechat` 选填
+- `POST /api/v1/feedback`：提交建议反馈；`content` 必填，`phone`、`wechat`、`attachments` 选填。附件最多 3 个，单个 5 MB、合计 10 MB，只接受经过内容签名检查的 PNG、JPEG、WebP、PDF、TXT、LOG
 
 ## Admin 管理后台
 
@@ -157,7 +157,11 @@ Admin 页面提供：
 - 按级别、事件名和任意结构化字段筛选日志
 - 查询失败、查询成功、护照重试、流控、熔断、队列和服务启停快捷筛选
 - 服务器、PPO 官网、成功率、队列和流控指标及状态历史
-- 用户反馈的正文、可选手机号/微信号、访问页面及客户端信息，可搜索、备注并标记未读/已读/已处理/已归档
+- 用户反馈的正文、可选手机号/微信号、截图或文件、访问页面及客户端信息，可搜索、预览/下载附件、备注并标记未读/已读/已处理/已归档
+
+## 检查更新
+
+GitHub 私有仓库的 Release 对未认证客户端固定返回 404，不能把仓库 Token 内置到安装包。正式分发时建议将发布仓库设为公开，或配置公开的 `PPO_UPDATE_MANIFEST_URL`；清单格式为 `{"version":"1.0.4","url":"https://下载页面或安装包地址"}`。开发者本机也可临时通过 `PPO_GITHUB_TOKEN` 检查私有仓库，但不要将 Token 写入 `.env` 后分发、提交源码或放进 CI 产物。
 
 完整信息只在 Admin 管理后台显示；普通 GUI 查询页不再提供详细日志窗口。
 

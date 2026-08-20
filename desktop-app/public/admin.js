@@ -5,7 +5,7 @@ const hashToken = new URLSearchParams(location.hash.slice(1)).get('desktopToken'
 if (hashToken) sessionStorage.setItem('ppo-desktop-token', hashToken);
 const token = hashToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashToken) history.replaceState(null, '', '/admin');
-const state = { auth:null, csrfToken:'', overview:null, queries:[], queryOffset:0, feedback:[], feedbackOffset:0, logs:[] };
+const state = { auth:null, csrfToken:'', overview:null, queries:[], queryOffset:0, feedback:[], feedbackOffset:0, logs:[], attachmentUrls:[] };
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char]); }
 function formatTime(value) { return value ? new Date(value).toLocaleString(getLanguage()==='en'?'en':'zh-CN') : '—'; }
@@ -21,6 +21,16 @@ async function adminApi(path, options={}) {
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error?.message||'管理员接口请求失败'), data.error||{}, { status:response.status });
   return data;
+}
+
+async function adminAttachment(path) {
+  const headers = { ...(token ? {'x-desktop-token':token} : {}), ...(state.csrfToken ? {'x-csrf-token':state.csrfToken} : {}) };
+  const response = await fetch(path, { credentials:'same-origin', headers });
+  if (!response.ok) {
+    let data={}; try { data=await response.json(); } catch {}
+    throw new Error(data.error?.message||t('附件读取失败'));
+  }
+  return response.blob();
 }
 
 function renderMetrics(status) {
@@ -57,7 +67,7 @@ function renderQueries(data,append=false) {
 async function loadQueries({append=false}={}) { if(!append) state.queryOffset=0; const params=new URLSearchParams({q:$('#query-search').value.trim(),status:$('#query-status').value,limit:'50',offset:String(state.queryOffset)}); const data=await adminApi(`/api/v1/admin/queries?${params}`); state.queries=append?[...state.queries,...data.items]:data.items; renderQueries(data,append); }
 
 function renderFeedback(data,append=false) {
-  const rows=data.items.map(item=>`<tr><td class="nowrap">${formatTime(item.createdAt)}</td><td><span class="status feedback-${escapeHtml(item.status)}"><i></i>${statusLabel(item.status)}</span></td><td class="feedback-copy" data-no-i18n>${escapeHtml(item.content)}</td><td>${escapeHtml(item.phone||'—')}<small class="muted block">${getLanguage()==='en'?'WeChat':'微信'}：${escapeHtml(item.wechat||'—')}</small></td><td class="mono">${escapeHtml(item.deviceId)}</td><td><span class="mono">${escapeHtml(item.sourceIp||'—')}</span><small class="muted block">${escapeHtml(geoText(item.geo))}</small></td><td><button data-feedback-id="${escapeHtml(item.id)}">${t('查看处理')}</button></td></tr>`).join('');
+  const rows=data.items.map(item=>`<tr><td class="nowrap">${formatTime(item.createdAt)}</td><td><span class="status feedback-${escapeHtml(item.status)}"><i></i>${statusLabel(item.status)}</span></td><td class="feedback-copy" data-no-i18n>${escapeHtml(item.content)}${item.attachments?.length?`<small class="muted block">📎 ${item.attachments.length} ${getLanguage()==='en'?'attachment(s)':'个附件'}</small>`:''}</td><td>${escapeHtml(item.phone||'—')}<small class="muted block">${getLanguage()==='en'?'WeChat':'微信'}：${escapeHtml(item.wechat||'—')}</small></td><td class="mono">${escapeHtml(item.deviceId)}</td><td><span class="mono">${escapeHtml(item.sourceIp||'—')}</span><small class="muted block">${escapeHtml(geoText(item.geo))}</small></td><td><button data-feedback-id="${escapeHtml(item.id)}">${t('查看处理')}</button></td></tr>`).join('');
   if(append) $('#feedback-body').insertAdjacentHTML('beforeend',rows); else $('#feedback-body').innerHTML=rows||`<tr><td colspan="7" class="muted">${t('没有匹配的反馈')}</td></tr>`;
   $('#feedback-total').textContent=getLanguage()==='en'?`${data.total} total`:`共 ${data.total} 条`; $('#load-more-feedback').classList.toggle('hidden',!data.hasMore); bindFeedbackButtons();
 }
@@ -73,12 +83,25 @@ function bindFeedbackButtons() { document.querySelectorAll('[data-feedback-id]')
 
 async function showQuery(id) {
   const record=await adminApi(`/api/v1/admin/queries/${encodeURIComponent(id)}`), request=record.request||{};
-  $('#query-detail').innerHTML=`<dl class="detail-grid"><dt>状态</dt><dd>${statusLabel(record.status)}</dd><dt>任务 / 追踪编号</dt><dd class="mono">${escapeHtml(record.id)}<br>${escapeHtml(record.traceId)}</dd><dt>车牌 / 完整证件</dt><dd class="mono">${escapeHtml(requestSummary(record))} · ${escapeHtml(request.documentNumber||'—')}</dd><dt>来源 / IP</dt><dd>${escapeHtml(record.source)} · <span class="mono">${escapeHtml(record.sourceIp||'—')}</span></dd><dt>IP 归属信息</dt><dd>${escapeHtml(geoText(record.geo))}<br><span class="muted">时区 ${escapeHtml(record.geo?.timezone||'—')}</span></dd><dt>设备标识</dt><dd class="mono">${escapeHtml(record.deviceId||'—')}</dd><dt>User-Agent</dt><dd>${escapeHtml(record.userAgent||'—')}</dd><dt>创建 / 完成</dt><dd>${formatTime(record.createdAt)} / ${formatTime(record.finishedAt)}</dd><dt>结果</dt><dd>${escapeHtml(queryResultText(record))}</dd><dt>官网原始提示</dt><dd dir="auto">${escapeHtml(record.error?.officialMessage||'—')}</dd></dl><div class="event-list">${record.events.map(event=>`<article><strong>${escapeHtml(event.step||event.event)}</strong><small>${formatTime(event.createdAt)} · ${event.progress??'—'}% · ${escapeHtml(event.details?.detail||'')}</small></article>`).join('')}</div>`; $('#query-dialog').showModal();
+  $('#query-detail').innerHTML=`<dl class="detail-grid"><dt>状态</dt><dd>${statusLabel(record.status)}</dd><dt>任务 / 追踪编号</dt><dd class="mono">${escapeHtml(record.id)}<br>${escapeHtml(record.traceId)}</dd><dt>车牌 / 完整证件</dt><dd class="mono">${escapeHtml(requestSummary(record))} · ${escapeHtml(request.documentNumber||'—')}</dd><dt>来源 / IP</dt><dd>${escapeHtml(record.source)} · <span class="mono">${escapeHtml(record.sourceIp||'—')}</span></dd><dt>IP 归属信息</dt><dd>${escapeHtml(geoText(record.geo))}<br><span class="muted">${t('时区')} ${escapeHtml(record.geo?.timezone||'—')}</span></dd><dt>设备标识</dt><dd class="mono">${escapeHtml(record.deviceId||'—')}</dd><dt>User-Agent</dt><dd>${escapeHtml(record.userAgent||'—')}</dd><dt>创建 / 完成</dt><dd>${formatTime(record.createdAt)} / ${formatTime(record.finishedAt)}</dd><dt>结果</dt><dd>${escapeHtml(queryResultText(record))}</dd><dt>官网原始提示</dt><dd dir="auto">${escapeHtml(record.error?.officialMessage||'—')}</dd></dl><div class="event-list">${record.events.map(event=>`<article><strong>${escapeHtml(event.step||event.event)}</strong><small>${formatTime(event.createdAt)} · ${event.progress??'—'}% · ${escapeHtml(event.details?.detail||'')}</small></article>`).join('')}</div>`; $('#query-dialog').showModal();
 }
 async function showFeedback(id) {
   const item=await adminApi(`/api/v1/admin/feedback/${encodeURIComponent(id)}`);
-  $('#feedback-detail').innerHTML=`<dl class="detail-grid"><dt>反馈编号</dt><dd class="mono">${escapeHtml(item.id)}</dd><dt>提交时间</dt><dd>${formatTime(item.createdAt)}</dd><dt>反馈内容</dt><dd class="preserve">${escapeHtml(item.content)}</dd><dt>手机号</dt><dd>${escapeHtml(item.phone||'—')}</dd><dt>微信号</dt><dd>${escapeHtml(item.wechat||'—')}</dd><dt>设备标识</dt><dd class="mono">${escapeHtml(item.deviceId)}</dd><dt>来源 IP</dt><dd class="mono">${escapeHtml(item.sourceIp||'—')}</dd><dt>IP 归属信息</dt><dd>${escapeHtml(geoText(item.geo))}<br><span class="muted">时区 ${escapeHtml(item.geo?.timezone||'—')}</span></dd><dt>User-Agent</dt><dd>${escapeHtml(item.userAgent||'—')}</dd><dt>页面</dt><dd>${escapeHtml(item.pageUrl||'—')}</dd></dl><form id="feedback-update-form" class="feedback-update"><label>处理状态<select id="feedback-update-status"><option value="new">未读</option><option value="read">已读</option><option value="resolved">已处理</option><option value="archived">已归档</option></select></label><label>管理员备注<textarea id="feedback-admin-note" maxlength="2000" placeholder="记录处理结果或后续事项">${escapeHtml(item.adminNote||'')}</textarea></label><button type="submit">保存处理结果</button><p id="feedback-update-message" class="form-message hidden"></p></form>`;
-  $('#feedback-update-status').value=item.status; $('#feedback-update-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#feedback-update-message');try{await adminApi(`/api/v1/admin/feedback/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({status:$('#feedback-update-status').value,adminNote:$('#feedback-admin-note').value.trim()})});message.textContent=t('已保存');message.classList.remove('hidden');await Promise.all([loadFeedback(),loadOverview()]);}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}}); $('#feedback-dialog').showModal();
+  for(const url of state.attachmentUrls) URL.revokeObjectURL(url); state.attachmentUrls=[];
+  $('#feedback-detail').innerHTML=`<dl class="detail-grid"><dt>反馈编号</dt><dd class="mono">${escapeHtml(item.id)}</dd><dt>提交时间</dt><dd>${formatTime(item.createdAt)}</dd><dt>反馈内容</dt><dd class="preserve">${escapeHtml(item.content)}</dd><dt>附件</dt><dd><div id="feedback-attachments-view" class="attachment-grid"><span class="muted">${item.attachments?.length?t('正在加载…'):t('无附件')}</span></div></dd><dt>手机号</dt><dd>${escapeHtml(item.phone||'—')}</dd><dt>微信号</dt><dd>${escapeHtml(item.wechat||'—')}</dd><dt>设备标识</dt><dd class="mono">${escapeHtml(item.deviceId)}</dd><dt>来源 IP</dt><dd class="mono">${escapeHtml(item.sourceIp||'—')}</dd><dt>IP 归属信息</dt><dd>${escapeHtml(geoText(item.geo))}<br><span class="muted">${t('时区')} ${escapeHtml(item.geo?.timezone||'—')}</span></dd><dt>User-Agent</dt><dd>${escapeHtml(item.userAgent||'—')}</dd><dt>页面</dt><dd>${escapeHtml(item.pageUrl||'—')}</dd></dl><form id="feedback-update-form" class="feedback-update"><label>处理状态<select id="feedback-update-status"><option value="new">未读</option><option value="read">已读</option><option value="resolved">已处理</option><option value="archived">已归档</option></select></label><label>管理员备注<textarea id="feedback-admin-note" maxlength="2000" placeholder="记录处理结果或后续事项">${escapeHtml(item.adminNote||'')}</textarea></label><button type="submit">保存处理结果</button><p id="feedback-update-message" class="form-message hidden"></p></form>`;
+  $('#feedback-dialog').showModal();
+  if(item.attachments?.length) {
+    const view=$('#feedback-attachments-view'); view.innerHTML='';
+    for(const attachment of item.attachments) {
+      try {
+        const blob=await adminAttachment(`/api/v1/admin/feedback/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`);
+        const objectUrl=URL.createObjectURL(blob); state.attachmentUrls.push(objectUrl);
+        const preview=attachment.mime.startsWith('image/')?`<img src="${objectUrl}" alt="${escapeHtml(attachment.name)}">`:'<span class="attachment-file-icon">📄</span>';
+        view.insertAdjacentHTML('beforeend',`<a class="attachment-card" href="${objectUrl}" download="${escapeHtml(attachment.name)}" target="_blank" rel="noopener">${preview}<strong data-no-i18n>${escapeHtml(attachment.name)}</strong><small>${Math.max(1,Math.ceil(attachment.size/1024))} KB · ${t('查看或下载')}</small></a>`);
+      } catch(error) { view.insertAdjacentHTML('beforeend',`<p class="form-message">${escapeHtml(error.message)}</p>`); }
+    }
+  }
+  $('#feedback-update-status').value=item.status; $('#feedback-update-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#feedback-update-message');try{await adminApi(`/api/v1/admin/feedback/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({status:$('#feedback-update-status').value,adminNote:$('#feedback-admin-note').value.trim()})});message.textContent=t('已保存');message.classList.remove('hidden');await Promise.all([loadFeedback(),loadOverview()]);}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
 }
 
 function showLogin(auth) { $('#admin-content').classList.add('hidden'); $('#login-panel').classList.remove('hidden'); $('#login-hint').textContent=auth.passwordConfigured?t('请输入远程管理员密码。'):(getLanguage()==='en'?'No password is configured. Open Admin from the desktop GUI and select “Set password”.':'尚未设置密码。请先在桌面 GUI 的 Admin 页面点击“设置密码”。'); $('#login-password').disabled=!auth.passwordConfigured; $('#admin-live').className='live offline'; $('#admin-live').innerHTML=`<i></i>${t('需要登录')}`; }

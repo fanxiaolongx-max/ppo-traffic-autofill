@@ -70,6 +70,7 @@ export class Store {
         wechat TEXT,
         content TEXT NOT NULL,
         page_url TEXT,
+        attachments_json TEXT,
         status TEXT NOT NULL DEFAULT 'new',
         admin_note TEXT,
         created_at TEXT NOT NULL,
@@ -91,6 +92,8 @@ export class Store {
     const columns = new Set(this.db.prepare('PRAGMA table_info(queries)').all().map(column => column.name));
     if (!columns.has('detail')) this.db.exec('ALTER TABLE queries ADD COLUMN detail TEXT');
     if (!columns.has('geo_json')) this.db.exec('ALTER TABLE queries ADD COLUMN geo_json TEXT');
+    const feedbackColumns = new Set(this.db.prepare('PRAGMA table_info(feedback)').all().map(column => column.name));
+    if (!feedbackColumns.has('attachments_json')) this.db.exec('ALTER TABLE feedback ADD COLUMN attachments_json TEXT');
     this.db.prepare("UPDATE queries SET status='interrupted', step='process_restarted', finished_at=?, updated_at=? WHERE status='running'")
       .run(new Date().toISOString(), new Date().toISOString());
   }
@@ -284,10 +287,11 @@ export class Store {
 
   createFeedback(record) {
     this.db.prepare(`INSERT INTO feedback
-      (id, device_id, source_ip, user_agent, geo_json, phone, wechat, content, page_url, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).run(
+      (id, device_id, source_ip, user_agent, geo_json, phone, wechat, content, page_url, attachments_json, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).run(
       record.id, record.deviceId, record.sourceIp, record.userAgent, record.geo ? JSON.stringify(record.geo) : null,
-      record.phone || null, record.wechat || null, record.content, record.pageUrl || null, record.createdAt, record.createdAt
+      record.phone || null, record.wechat || null, record.content, record.pageUrl || null,
+      record.attachments?.length ? JSON.stringify(record.attachments) : null, record.createdAt, record.createdAt
     );
     return this.getFeedback(record.id);
   }
@@ -395,6 +399,7 @@ export class Store {
       id: row.id, deviceId: row.device_id, sourceIp: row.source_ip, userAgent: row.user_agent,
       geo: row.geo_json ? JSON.parse(row.geo_json) : null, phone: row.phone || '', wechat: row.wechat || '',
       content: row.content, pageUrl: row.page_url || '', status: row.status, adminNote: row.admin_note || '',
+      attachments: row.attachments_json ? JSON.parse(row.attachments_json) : [],
       createdAt: row.created_at, updatedAt: row.updated_at
     };
   }

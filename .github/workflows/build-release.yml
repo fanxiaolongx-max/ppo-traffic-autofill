@@ -14,21 +14,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  browser-extensions:
-    name: Chrome and Edge packages
+  prepare-version:
+    name: Prepare unified release version
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      commit_sha: ${{ steps.prepare.outputs.commit_sha }}
+      version: ${{ steps.prepare.outputs.version }}
+      release_tag: ${{ steps.prepare.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Verify tag matches extension version
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Bump patch version on main pushes
+        id: prepare
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            release_tag="v$(node scripts/bump-version.mjs --next)"
+            if git ls-remote --exit-code --tags origin "refs/tags/${release_tag}" >/dev/null 2>&1; then
+              git fetch origin "refs/tags/${release_tag}:refs/tags/${release_tag}"
+              git checkout --detach "${release_tag}"
+              version="$(node -p "require('./manifest.json').version")"
+            else
+              version="$(node scripts/bump-version.mjs)"
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add -- manifest.json desktop-app/package.json desktop-app/package-lock.json README.md desktop-app/README.md
+              git commit -m "chore: bump release version to ${release_tag} [skip ci]"
+              git tag -a "${release_tag}" -m "${release_tag}"
+              git push origin HEAD:main "${release_tag}"
+            fi
+          else
+            version="$(node -p "require('./manifest.json').version")"
+            release_tag=""
+            if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+              release_tag="${GITHUB_REF_NAME}"
+              test "v${version}" = "${release_tag}"
+            fi
+          fi
+          echo "commit_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+
+  browser-extensions:
+    name: Chrome and Edge packages
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Verify prepared release version
+        if: needs.prepare-version.outputs.release_tag != ''
         shell: bash
         run: |
           manifest_version="$(node -p "require('./manifest.json').version")"
-          test "v${manifest_version}" = "${GITHUB_REF_NAME}" || {
-            echo "Tag ${GITHUB_REF_NAME} does not match manifest version v${manifest_version}."
+          test "v${manifest_version}" = "${{ needs.prepare-version.outputs.release_tag }}" || {
+            echo "Prepared tag ${{ needs.prepare-version.outputs.release_tag }} does not match manifest version v${manifest_version}."
             exit 1
           }
       - name: Validate and package both stores
@@ -49,6 +99,7 @@ jobs:
 
   macos-app:
     name: macOS universal app
+    needs: prepare-version
     runs-on: macos-latest
     env:
       SIGN_MAC_APP: ${{ secrets.MAC_CSC_LINK != '' }}
@@ -57,6 +108,8 @@ jobs:
         working-directory: desktop-app
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -108,8 +161,8 @@ jobs:
 
   github-release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [browser-extensions, macos-app]
+    if: needs.prepare-version.outputs.release_tag != ''
+    needs: [prepare-version, browser-extensions, macos-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -123,14 +176,15 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-version.outputs.release_tag }}
         run: |
           mapfile -t files < <(find release-assets -maxdepth 1 -type f -print | sort)
           test "${#files[@]}" -eq 4
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
           else
-            gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
+            gh release create "${RELEASE_TAG}" "${files[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "PPO Traffic Autofill ${GITHUB_REF_NAME}" \
+              --title "PPO Traffic Autofill ${RELEASE_TAG}" \
               --generate-notes
           fi

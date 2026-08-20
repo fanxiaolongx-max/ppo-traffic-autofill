@@ -134,6 +134,10 @@
         <label>微信号（选填）<input id="feedback-wechat" maxlength="64" autocomplete="off" placeholder="手机号和微信号可都不填"></label>
       </div>
       <label>反馈内容（必填）<textarea id="feedback-content" minlength="2" maxlength="2000" required placeholder="请描述遇到的问题、建议或希望增加的功能"></textarea></label>
+      <label class="feedback-file-field">截图或文件（选填）
+        <input id="feedback-attachments" type="file" multiple accept="image/png,image/jpeg,image/webp,application/pdf,text/plain,.log">
+        <small id="feedback-file-hint">最多 3 个；单个不超过 5 MB；支持 PNG、JPG、WebP、PDF、TXT、LOG</small>
+      </label>
       <div class="feedback-form-foot"><small id="feedback-count">0 / 2000</small><button id="feedback-submit" class="primary" type="submit">提交反馈</button></div>
       <p id="feedback-message" class="message hidden" role="alert"></p>
       <p class="privacy-note">为便于排查，服务端会一并记录本次访问的设备标识、IP、浏览器信息和粗略 IP 归属地。</p>

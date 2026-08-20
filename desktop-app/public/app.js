@@ -382,19 +382,44 @@ $('#close-status-dialog').addEventListener('click', () => $('#status-dialog').cl
 $('#feedback-button').addEventListener('click', () => $('#feedback-dialog').showModal());
 $('#close-feedback-dialog').addEventListener('click', () => $('#feedback-dialog').close());
 $('#feedback-content').addEventListener('input', event => { $('#feedback-count').textContent = `${event.target.value.length} / 2000`; });
+function attachmentPayload(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(t('读取附件失败，请重新选择')));
+    const inferredMime = ({png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',pdf:'application/pdf',txt:'text/plain',log:'text/plain'})[file.name.split('.').pop().toLowerCase()] || '';
+    reader.onload = () => resolve({ name:file.name, mime:file.type || inferredMime, data:String(reader.result).split(',')[1] || '' });
+    reader.readAsDataURL(file);
+  });
+}
+async function validateAttachmentFile(file) {
+  if (!file.type.startsWith('image/')) return;
+  if (typeof createImageBitmap !== 'function') return;
+  try {
+    const image = await createImageBitmap(file);
+    image.close();
+  } catch {
+    throw new Error(t('图片无法打开，请重新选择有效图片'));
+  }
+}
 $('#feedback-form').addEventListener('submit', async event => {
   event.preventDefault();
   const submit = $('#feedback-submit');
   const message = $('#feedback-message');
   submit.disabled = true; message.classList.add('hidden');
   try {
+    const files = [...$('#feedback-attachments').files];
+    if (files.length > 3) throw new Error(t('最多只能上传 3 个附件'));
+    if (files.some(file => file.size > 5 * 1024 * 1024)) throw new Error(t('单个附件不能超过 5 MB'));
+    if (files.reduce((sum, file) => sum + file.size, 0) > 10 * 1024 * 1024) throw new Error(t('附件总大小不能超过 10 MB'));
+    await Promise.all(files.map(validateAttachmentFile));
+    const attachments = await Promise.all(files.map(attachmentPayload));
     const result = await api('/api/v1/feedback', { method:'POST', body:JSON.stringify({
       phone:$('#feedback-phone').value.trim(), wechat:$('#feedback-wechat').value.trim(),
-      content:$('#feedback-content').value.trim(), pageUrl:`${location.origin}${location.pathname}`
+      content:$('#feedback-content').value.trim(), pageUrl:`${location.origin}${location.pathname}`, attachments
     }) });
     message.textContent = t(result.message);
     message.style.color = 'var(--success-text)'; message.style.background = 'var(--success-bg)'; message.style.borderColor = 'var(--success-border)'; message.classList.remove('hidden');
-    $('#feedback-content').value = ''; $('#feedback-count').textContent = '0 / 2000';
+    $('#feedback-content').value = ''; $('#feedback-attachments').value = ''; $('#feedback-count').textContent = '0 / 2000';
   } catch (error) {
     message.textContent = error.retryAfterMs ? `${localizeError(error)} ${getLanguage()==='en'?`(about ${Math.ceil(error.retryAfterMs/1000)}s)`:`（约 ${Math.ceil(error.retryAfterMs / 1000)} 秒）`}` : localizeError(error);
     message.style.color = ''; message.style.background = ''; message.style.borderColor = ''; message.classList.remove('hidden');

@@ -140,6 +140,7 @@ dialog::backdrop { background: rgba(0,0,0,.72); backdrop-filter: blur(4px); }
 .feedback-dialog input,.feedback-dialog textarea { width:100%; border:1px solid var(--line); border-radius:10px; padding:11px 12px; outline:none; background:#090f16; color:var(--text); font:inherit; }
 .feedback-dialog input:focus,.feedback-dialog textarea:focus { border-color:var(--gold); box-shadow:0 0 0 3px rgba(225,184,75,.1); }
 .feedback-dialog textarea { min-height:150px; resize:vertical; line-height:1.55; }
+.feedback-file-field { margin-top:12px; }.feedback-file-field input[type="file"] { padding:9px; color:var(--muted); }.feedback-file-field input[type="file"]::file-selector-button { margin-right:9px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; background:var(--panel2); color:var(--text); cursor:pointer; }.feedback-file-field small { color:var(--muted); line-height:1.5; }
 .feedback-contacts { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
 .feedback-form-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
 .feedback-form-foot small { color:var(--muted); }

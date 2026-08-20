@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, Notification, shell, Tray } from 'electron';
 import { compareVersions, fetchLatestRelease } from './release-update.js';
 
 const REPOSITORY = 'fanxiaolongx-max/ppo-traffic-autofill';
@@ -11,6 +11,7 @@ let tray;
 let serverModule;
 let boundPort;
 let checkingUpdate = false;
+let updateNotification;
 const desktopToken = process.env.PPO_DESKTOP_TOKEN || crypto.randomBytes(32).toString('hex');
 process.env.PPO_DESKTOP_TOKEN = desktopToken;
 
@@ -59,6 +60,28 @@ function hideMainWindow() {
   rebuildTrayMenu();
 }
 
+function showUpdateNotice({ title, body, url = '' }) {
+  // Native modal dialogs enter an AppKit runModal loop on macOS. Because the
+  // local HTTP server shares Electron's main process, a hidden modal dialog can
+  // stall every API and page request. Notifications remain fully non-blocking.
+  if (!Notification.isSupported()) {
+    const normalTooltip = `埃及车辆违章查询 · 端口 ${boundPort}`;
+    if (tray && !tray.isDestroyed()) tray.setToolTip(`${title} · ${body}`.slice(0, 120));
+    setTimeout(() => {
+      if (tray && !tray.isDestroyed()) tray.setToolTip(normalTooltip);
+    }, 10_000).unref?.();
+    return;
+  }
+  updateNotification?.close();
+  const notice = new Notification({ title, body, silent: false });
+  updateNotification = notice;
+  if (url) notice.on('click', () => shell.openExternal(url));
+  notice.on('close', () => {
+    if (updateNotification === notice) updateNotification = undefined;
+  });
+  notice.show();
+}
+
 async function checkForUpdates({ interactive = true } = {}) {
   if (checkingUpdate) return;
   checkingUpdate = true;
@@ -70,33 +93,22 @@ async function checkForUpdates({ interactive = true } = {}) {
     });
     const currentVersion = app.getVersion();
     if (compareVersions(release.version, currentVersion) > 0) {
-      const result = await dialog.showMessageBox({
-        type: 'info',
-        title: '发现新版本',
-        message: `发现新版本 ${release.version}`,
-        detail: `当前版本：${currentVersion}\n最新版本：${release.version}\n\n点击“前往下载”打开 GitHub Release 页面。`,
-        buttons: ['前往下载', '稍后'],
-        defaultId: 0,
-        cancelId: 1
+      showUpdateNotice({
+        title: `发现新版本 ${release.version}`,
+        body: `当前版本 ${currentVersion}。点击通知打开 GitHub Release 下载页面。`,
+        url: release.url
       });
-      if (result.response === 0) await shell.openExternal(release.url);
     } else if (interactive) {
-      await dialog.showMessageBox({
-        type: 'info',
+      showUpdateNotice({
         title: '检查更新',
-        message: '当前已是最新版本',
-        detail: `当前版本：${currentVersion}`,
-        buttons: ['好']
+        body: `当前已是最新版本 ${currentVersion}`
       });
     }
   } catch (error) {
     if (interactive) {
-      await dialog.showMessageBox({
-        type: 'warning',
+      showUpdateNotice({
         title: '暂时无法检查更新',
-        message: '未能读取 GitHub 最新版本信息',
-        detail: error.message,
-        buttons: ['好']
+        body: `未能读取 GitHub 最新版本信息：${error.message}`
       });
     }
   } finally {

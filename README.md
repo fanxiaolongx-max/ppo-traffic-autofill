@@ -1,13 +1,14 @@
 # PPO 交通违章自动填表助手
 
-版本：**1.0.7**<br>
+版本：**1.0.8**<br>
 适用浏览器：Google Chrome、Microsoft Edge（Manifest V3）<br>
 目标网站：[埃及公诉机关交通违章门户](https://www.ppo.gov.eg/ppo/r/ppoportal/ppoportal/traffic)
 
 这是一款面向埃及 PPO 交通违章查询页面的浏览器扩展，提供车辆资料保存、阿拉伯车牌快捷输入、网页自动填表、查询结果抓取和本地历史记录管理。
 
-## 1.0.7 更新内容
+## 1.0.8 更新内容
 
+- 修复 macOS 原生更新提示框进入模态循环后阻塞本地 Web/API 服务的问题；更新结果改为非阻塞系统通知，发现新版本时可点击通知打开 Release 页面。
 - 修复 macOS 菜单栏托盘图标在暗色/透明菜单栏中不可见的问题
 - 修复反向代理访问被错误记录为 `127.0.0.1`，查询与反馈统一记录可信来源的真实客户端 IP
 - 建议反馈支持受限截图与文件附件，Admin 可鉴权预览或下载
@@ -67,7 +68,7 @@
 
 ## 发布包构建
 
-当前商店版本为 `1.0.7`，重新打包时使用：
+当前商店版本为 `1.0.8`，重新打包时使用：
 
 ```bash
 ./package_extension.sh --no-bump
@@ -76,21 +77,21 @@
 生成文件：
 
 ```text
-dist/ppo-traffic-autofill-chrome-v1.0.7.zip
-dist/ppo-traffic-autofill-edge-v1.0.7.zip
+dist/ppo-traffic-autofill-chrome-v1.0.8.zip
+dist/ppo-traffic-autofill-edge-v1.0.8.zip
 dist/ppo-traffic-autofill-chrome-latest.zip
 dist/ppo-traffic-autofill-edge-latest.zip
 ```
 
-带版本号的 Chrome、Edge ZIP 分别用于两个商店；`latest` 文件方便本地反复验证。两个浏览器目前都使用同一套 Manifest V3 源码，但使用独立文件名可以避免上架时选错包。正式上传前请确认商店当前已发布版本低于 `1.0.7`；如果商店已经发布过 `1.0.7`，则必须提升版本号后再提交。
+带版本号的 Chrome、Edge ZIP 分别用于两个商店；`latest` 文件方便本地反复验证。两个浏览器目前都使用同一套 Manifest V3 源码，但使用独立文件名可以避免上架时选错包。正式上传前请确认商店当前已发布版本低于 `1.0.8`；如果商店已经发布过 `1.0.8`，则必须提升版本号后再提交。
 
 ## GitHub 自动构建与 Release
 
 仓库内置 `.github/workflows/build-release.yml`：
 
-- 每次推送到 `main` 后，自动将补丁版本递增一次，并同步更新扩展 Manifest、桌面 App、锁文件和 README；机器人版本提交使用 `[skip ci]`，不会形成重复触发或无限递增。
+- 推送到 `main` 时，如果提交尚未升版则自动递增补丁版本；如果本地已经统一升版则直接沿用该版本，保证本地与远端产物一致，并避免重复递增。
 - 自动创建同版本 Git 标签，校验并打包 Chrome ZIP、Edge ZIP，以及 macOS Universal DMG/ZIP，随后创建 GitHub Release 并附上 4 个可下载文件。
-- 手工推送形如 `v1.0.7` 的版本标签时仍会验证并构建该版本，但一般无需再手工创建标签。
+- 手工推送形如 `v1.0.8` 的版本标签时仍会验证并构建该版本，但一般无需再手工创建标签。
 - 标签、`manifest.json` 扩展版本与 `desktop-app/package.json` 桌面程序版本必须完全一致，否则任务会主动失败，防止发布错版本。
 - macOS 使用 Universal 架构构建，可同时覆盖 Apple Silicon 与 Intel Mac。未配置签名密钥时仍会生成安装包，但正式分发建议按 `desktop-app/README.md` 配置签名和公证密钥。
 

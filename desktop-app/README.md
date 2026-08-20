@@ -161,7 +161,7 @@ Admin 页面提供：
 
 ## 检查更新
 
-GitHub 私有仓库的 Release 对未认证客户端固定返回 404，不能把仓库 Token 内置到安装包。正式分发时建议将发布仓库设为公开，或配置公开的 `PPO_UPDATE_MANIFEST_URL`；清单格式为 `{"version":"1.0.5","url":"https://下载页面或安装包地址"}`。开发者本机也可临时通过 `PPO_GITHUB_TOKEN` 检查私有仓库，但不要将 Token 写入 `.env` 后分发、提交源码或放进 CI 产物。
+GitHub 私有仓库的 Release 对未认证客户端固定返回 404，不能把仓库 Token 内置到安装包。正式分发时建议将发布仓库设为公开，或配置公开的 `PPO_UPDATE_MANIFEST_URL`；清单格式为 `{"version":"1.0.6","url":"https://下载页面或安装包地址"}`。开发者本机也可临时通过 `PPO_GITHUB_TOKEN` 检查私有仓库，但不要将 Token 写入 `.env` 后分发、提交源码或放进 CI 产物。
 
 完整信息只在 Admin 管理后台显示；普通 GUI 查询页不再提供详细日志窗口。
 

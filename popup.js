@@ -36,8 +36,12 @@ const COUNTRY_OPTIONS = [
 
 const COMMON_LETTERS = [
   'أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط',
-  'ع', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'هـ', 'و', 'ي'
+  'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'
 ];
+
+function normalizePlateLetter(value) {
+  return String(value || '').replaceAll('\u0640', '').trim();
+}
 
 let activeLetterTarget = 'letter1';
 let numeralMode = 'latin';
@@ -66,7 +70,7 @@ function initDOM() {
   const palette = document.getElementById('ppo-letter-palette');
   if (palette) {
     palette.innerHTML = COMMON_LETTERS.map(char => 
-      `<button type="button" class="ppo-letter-btn" data-char="${char}">${char}</button>`
+      `<button type="button" class="ppo-letter-btn" data-char="${char}" title="${char === 'ه' ? '蛋形字母 ه（Hāʾ）' : char}">${char}</button>`
     ).join('');
   }
 
@@ -312,9 +316,9 @@ let currentPassportFormat = 'raw';
 function getFormData() {
   const rawPass = document.getElementById('ppo-in-passport-no')?.value || '';
   return {
-    letter1: document.getElementById('ppo-in-letter1')?.value || '',
-    letter2: document.getElementById('ppo-in-letter2')?.value || '',
-    letter3: document.getElementById('ppo-in-letter3')?.value || '',
+    letter1: normalizePlateLetter(document.getElementById('ppo-in-letter1')?.value),
+    letter2: normalizePlateLetter(document.getElementById('ppo-in-letter2')?.value),
+    letter3: normalizePlateLetter(document.getElementById('ppo-in-letter3')?.value),
     platenum: document.getElementById('ppo-in-platenum')?.value || '',
     numeralMode: numeralMode,
     ownerType: document.querySelector('input[name="ppo_owner_type"]:checked')?.value || 'passport',
@@ -695,9 +699,9 @@ function applyProfileObj(profile) {
   currentProfileId = profile.id;
   chrome.storage.local.set({ [LAST_ACTIVE_KEY]: profile.id });
 
-  document.getElementById('ppo-in-letter1').value = profile.letter1 || '';
-  document.getElementById('ppo-in-letter2').value = profile.letter2 || '';
-  document.getElementById('ppo-in-letter3').value = profile.letter3 || '';
+  document.getElementById('ppo-in-letter1').value = normalizePlateLetter(profile.letter1);
+  document.getElementById('ppo-in-letter2').value = normalizePlateLetter(profile.letter2);
+  document.getElementById('ppo-in-letter3').value = normalizePlateLetter(profile.letter3);
   document.getElementById('ppo-in-platenum').value = profile.platenum || '';
 
   if (profile.numeralMode) {
@@ -740,9 +744,9 @@ function applyProfileObj(profile) {
 
 function applyDraftObj(draft) {
   if (!draft) return;
-  if (draft.letter1) document.getElementById('ppo-in-letter1').value = draft.letter1;
-  if (draft.letter2) document.getElementById('ppo-in-letter2').value = draft.letter2;
-  if (draft.letter3) document.getElementById('ppo-in-letter3').value = draft.letter3;
+  if (draft.letter1) document.getElementById('ppo-in-letter1').value = normalizePlateLetter(draft.letter1);
+  if (draft.letter2) document.getElementById('ppo-in-letter2').value = normalizePlateLetter(draft.letter2);
+  if (draft.letter3) document.getElementById('ppo-in-letter3').value = normalizePlateLetter(draft.letter3);
   if (draft.platenum) document.getElementById('ppo-in-platenum').value = draft.platenum;
   if (draft.passportNo) document.getElementById('ppo-in-passport-no').value = draft.passportNo;
   if (draft.nationalId) document.getElementById('ppo-in-national-id').value = draft.nationalId;

@@ -1,6 +1,6 @@
 import { isValidChinaPassport, normalizeChinaPassport } from '../public/passport-format.js';
 
-const ALLOWED_PLATE_LETTERS = new Set(['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'هـ', 'و', 'ي']);
+const ALLOWED_PLATE_LETTERS = new Set(['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي']);
 const SUPPORTED_COUNTRIES = new Set(['10206']);
 
 function invalid(message, code) {
@@ -10,7 +10,11 @@ function invalid(message, code) {
 export function validateQueryPayload(payload) {
   const plate = payload?.plate || {};
   const owner = payload?.owner || {};
-  const letters = Array.isArray(plate.letters) ? plate.letters.map(value => String(value || '').trim()) : [];
+  // Older builds stored Hāʾ as "هـ" (ه + tatweel). PPO fields accept one
+  // character, so strip presentation-only tatweel and submit canonical "ه".
+  const letters = Array.isArray(plate.letters)
+    ? plate.letters.map(value => String(value || '').replaceAll('\u0640', '').trim())
+    : [];
   const plateNumber = String(plate.number || '').trim();
   const ownerType = String(owner.type || '');
   let documentNumber = String(owner.documentNumber || '').trim();

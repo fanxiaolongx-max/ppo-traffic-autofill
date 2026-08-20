@@ -1,12 +1,12 @@
 # PPO 交通违章自动填表助手
 
-版本：**1.0.6**<br>
+版本：**1.0.7**<br>
 适用浏览器：Google Chrome、Microsoft Edge（Manifest V3）<br>
 目标网站：[埃及公诉机关交通违章门户](https://www.ppo.gov.eg/ppo/r/ppoportal/ppoportal/traffic)
 
 这是一款面向埃及 PPO 交通违章查询页面的浏览器扩展，提供车辆资料保存、阿拉伯车牌快捷输入、网页自动填表、查询结果抓取和本地历史记录管理。
 
-## 1.0.6 更新内容
+## 1.0.7 更新内容
 
 - 修复 macOS 菜单栏托盘图标在暗色/透明菜单栏中不可见的问题
 - 修复反向代理访问被错误记录为 `127.0.0.1`，查询与反馈统一记录可信来源的真实客户端 IP
@@ -17,6 +17,8 @@
 - 修复弹窗「仅填表」在非官网页面点击时会被强制自动提交查询的问题。
 - 新增埃及当地深夜时段（00:00–06:00）查询前提醒：该时段官方后端服务常调不通，提醒可选择继续查询或改日间再查，当天只提示一次。时段按开罗时区判断，用户身处任何时区结果一致。
 - 新增「官方后端服务暂时不可用」错误识别（`حدث خطأ أثناء معالجة الطلب`）：此前该错误落入通用兜底分支，会误导用户去核对车牌与证件，实际与填写内容无关。
+- 新增「车辆登记资料需要更新」业务提示识别（`لا يوجد لهذه الرخصة بيانات مسجلة حديثة`）：App 与插件提供准确中文说明，且不计入官网故障或熔断统计；插件收到官网错误时会隐藏上一笔成功结果，避免误认成当前查询结果。
+- 校准现行埃及号牌的 17 字母快捷面板；修正字母 ه 的显示与传参：界面使用号牌上的独立蛋形 `ه`，后台兼容旧配置中的连接形 `هـ` 并统一向 PPO 官网提交单字符 `ه`。
 - `trust_ppo_cert.sh` 改为补全官网缺失的中间证书，不再把网站证书当根证书信任；新增 `--check` / `--system` / `--revert` 参数。
 
 ## 1.0.2 更新内容
@@ -65,7 +67,7 @@
 
 ## 发布包构建
 
-当前商店版本为 `1.0.6`，重新打包时使用：
+当前商店版本为 `1.0.7`，重新打包时使用：
 
 ```bash
 ./package_extension.sh --no-bump
@@ -74,13 +76,13 @@
 生成文件：
 
 ```text
-dist/ppo-traffic-autofill-chrome-v1.0.6.zip
-dist/ppo-traffic-autofill-edge-v1.0.6.zip
+dist/ppo-traffic-autofill-chrome-v1.0.7.zip
+dist/ppo-traffic-autofill-edge-v1.0.7.zip
 dist/ppo-traffic-autofill-chrome-latest.zip
 dist/ppo-traffic-autofill-edge-latest.zip
 ```
 
-带版本号的 Chrome、Edge ZIP 分别用于两个商店；`latest` 文件方便本地反复验证。两个浏览器目前都使用同一套 Manifest V3 源码，但使用独立文件名可以避免上架时选错包。正式上传前请确认商店当前已发布版本低于 `1.0.6`；如果商店已经发布过 `1.0.6`，则必须提升版本号后再提交。
+带版本号的 Chrome、Edge ZIP 分别用于两个商店；`latest` 文件方便本地反复验证。两个浏览器目前都使用同一套 Manifest V3 源码，但使用独立文件名可以避免上架时选错包。正式上传前请确认商店当前已发布版本低于 `1.0.7`；如果商店已经发布过 `1.0.7`，则必须提升版本号后再提交。
 
 ## GitHub 自动构建与 Release
 
@@ -88,7 +90,7 @@ dist/ppo-traffic-autofill-edge-latest.zip
 
 - 每次推送到 `main` 后，自动将补丁版本递增一次，并同步更新扩展 Manifest、桌面 App、锁文件和 README；机器人版本提交使用 `[skip ci]`，不会形成重复触发或无限递增。
 - 自动创建同版本 Git 标签，校验并打包 Chrome ZIP、Edge ZIP，以及 macOS Universal DMG/ZIP，随后创建 GitHub Release 并附上 4 个可下载文件。
-- 手工推送形如 `v1.0.6` 的版本标签时仍会验证并构建该版本，但一般无需再手工创建标签。
+- 手工推送形如 `v1.0.7` 的版本标签时仍会验证并构建该版本，但一般无需再手工创建标签。
 - 标签、`manifest.json` 扩展版本与 `desktop-app/package.json` 桌面程序版本必须完全一致，否则任务会主动失败，防止发布错版本。
 - macOS 使用 Universal 架构构建，可同时覆盖 Apple Silicon 与 Intel Mac。未配置签名密钥时仍会生成安装包，但正式分发建议按 `desktop-app/README.md` 配置签名和公证密钥。
 

@@ -26,11 +26,10 @@ const NumberUtils = {
     { ar: 'ع', name: 'Ain' },
     { ar: 'ف', name: 'Faa' },
     { ar: 'ق', name: 'Qaaf' },
-    { ar: 'ك', name: 'Kaaf' },
     { ar: 'ل', name: 'Laam' },
     { ar: 'م', name: 'Meem' },
     { ar: 'ن', name: 'Noon' },
-    { ar: 'هـ', name: 'Haa' },
+    { ar: 'ه', name: 'Haa' },
     { ar: 'و', name: 'Waaw' },
     { ar: 'ي', name: 'Yaa' }
   ],

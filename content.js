@@ -38,8 +38,14 @@
 
   const COMMON_LETTERS = [
     'أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط',
-    'ع', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'هـ', 'و', 'ي'
+    'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'
   ];
+
+  // ه is the one-character value accepted by PPO. Older versions used هـ
+  // (ه + U+0640 tatweel) only to force a connected visual shape.
+  function normalizePlateLetter(value) {
+    return String(value || '').replaceAll('\u0640', '').trim();
+  }
 
   let activeLetterTarget = 'letter1';
   let numeralMode = 'latin';
@@ -208,7 +214,7 @@
                   快捷字母面板 (点击直接填入当前高亮框):
                 </div>
                 <div class="ppo-letter-picker" id="ppo-letter-palette">
-                  ${COMMON_LETTERS.map(char => `<button type="button" class="ppo-letter-btn" data-char="${char}">${char}</button>`).join('')}
+                  ${COMMON_LETTERS.map(char => `<button type="button" class="ppo-letter-btn" data-char="${char}" title="${char === 'ه' ? '蛋形字母 ه（Hāʾ）' : char}">${char}</button>`).join('')}
                 </div>
 
                 <div class="ppo-preview-pill" id="ppo-plate-preview">
@@ -635,9 +641,9 @@
   function getFormDataFromUI() {
     const rawPass = (document.getElementById('ppo-in-passport-no')?.value || '').trim();
     return {
-      letter1: document.getElementById('ppo-in-letter1')?.value || '',
-      letter2: document.getElementById('ppo-in-letter2')?.value || '',
-      letter3: document.getElementById('ppo-in-letter3')?.value || '',
+      letter1: normalizePlateLetter(document.getElementById('ppo-in-letter1')?.value),
+      letter2: normalizePlateLetter(document.getElementById('ppo-in-letter2')?.value),
+      letter3: normalizePlateLetter(document.getElementById('ppo-in-letter3')?.value),
       platenum: document.getElementById('ppo-in-platenum')?.value || '',
       numeralMode: numeralMode,
       ownerType: document.querySelector('input[name="ppo_owner_type"]:checked')?.value || 'passport',
@@ -697,9 +703,9 @@
   function setFormDataToUI(data) {
     if (!data) return;
     currentPassportFormat = data.passportFormat || (/^[A-Za-z]/.test(data.passportNo || '') ? 'raw' : 'cleaned');
-    if (data.letter1) document.getElementById('ppo-in-letter1').value = data.letter1;
-    if (data.letter2) document.getElementById('ppo-in-letter2').value = data.letter2;
-    if (data.letter3) document.getElementById('ppo-in-letter3').value = data.letter3;
+    if (data.letter1) document.getElementById('ppo-in-letter1').value = normalizePlateLetter(data.letter1);
+    if (data.letter2) document.getElementById('ppo-in-letter2').value = normalizePlateLetter(data.letter2);
+    if (data.letter3) document.getElementById('ppo-in-letter3').value = normalizePlateLetter(data.letter3);
     if (data.platenum) document.getElementById('ppo-in-platenum').value = data.platenum;
 
     if (data.numeralMode) {
@@ -853,6 +859,12 @@
   }
 
   function doFillOperations(data, autoSubmit) {
+    data = {
+      ...data,
+      letter1: normalizePlateLetter(data.letter1),
+      letter2: normalizePlateLetter(data.letter2),
+      letter3: normalizePlateLetter(data.letter3)
+    };
     activeQueryData = { ...data };
     try {
       sessionStorage.setItem('ppo_active_query_req', JSON.stringify(activeQueryData));
@@ -1203,7 +1215,21 @@
   function classifyOfficialError(pageText, dialogText) {
     const combined = `${pageText} ${dialogText}`.toLowerCase();
 
-    // 1. 车牌与证件不匹配 / 格式不正确 (الرقم القومي أو رقم الرخصة غير صحيح)
+    // 1. 车辆档案没有近期登记数据，需要前往所属交通检察机关更新。
+    // 必须放在宽泛的“رقم الرخصة”匹配规则之前，避免被误判为车牌或证件不匹配。
+    if (combined.includes('لا يوجد لهذه الرخصة بيانات مسجلة حديثة')
+      || combined.includes('لا توجد لهذه الرخصة بيانات مسجلة حديثة')
+      || (combined.includes('نيابة المرور المختصة') && combined.includes('تحديث البيانات'))) {
+      return {
+        title: 'ℹ️ 车辆登记资料需要更新',
+        detail: '埃及 PPO 官网提示：该车辆牌照目前没有近期登记的数据。',
+        suggestion: '请车主前往该车辆所属的交通检察机关更新登记资料。这是官网正常返回的业务提示，并非插件、网络或填写流程故障。',
+        autoDismiss: true,
+        rawReason: 'لا يوجد لهذه الرخصة بيانات مسجلة حديثة برجاء التوجه الى نيابة المرور المختصة لتحديث البيانات'
+      };
+    }
+
+    // 2. 车牌与证件不匹配 / 格式不正确 (الرقم القومي أو رقم الرخصة غير صحيح)
     if (combined.includes('رقم الرخصة غير صحيح') || combined.includes('الرقم القومي أو رقم الرخصة') || combined.includes('غير صحيح') || combined.includes('يرجى التحقق') || combined.includes('رقم الرخصة')) {
       return {
         title: '❌ 车牌号或证件号不匹配/不正确 (رقم الرخصة أو الرقم غير صحيح)',
@@ -1214,7 +1240,7 @@
       };
     }
 
-    // 2. 官方会话已超时过期 (لقد انتهت جلستك)
+    // 3. 官方会话已超时过期 (لقد انتهت جلستك)
     if (combined.includes('انتهت جلستك') || combined.includes('انتهت الجلسة') || combined.includes('إعادة تحميل') || combined.includes('جلسة') || combined.includes('session expired') || combined.includes('wwv_flow')) {
       return {
         title: '⏱️ 官方会话已超时过期 (انتهت جلستك)',
@@ -1225,7 +1251,7 @@
       };
     }
 
-    // 3. 官方后端服务不可用 (حدث خطأ أثناء معالجة الطلب)
+    // 4. 官方后端服务不可用 (حدث خطأ أثناء معالجة الطلب)
     // 前端页面与表单一切正常、请求也已被受理，但官方后端服务调不通。
     // 实测在埃及当地深夜时段高发，此时手动填表同样失败，与用户填写的数据无关。
     if (combined.includes('معالجة الطلب') || combined.includes('برجاء المحاولة لاحقا')) {
@@ -1244,7 +1270,7 @@
       };
     }
 
-    // 4. 官方服务执行出错 (حدث خطأ أثناء تنفيذ الخدمة)
+    // 5. 官方服务执行出错 (حدث خطأ أثناء تنفيذ الخدمة)
     if (combined.includes('حدث خطأ أثناء تنفيذ الخدمة') || combined.includes('خطأ أثناء تنفيذ')) {
       return {
         title: '⚠️ 官方服务执行出错 (خطأ أثناء تنفيذ الخدمة)',
@@ -1347,6 +1373,8 @@
     if (hasError) {
       stopQueryWatchdog();
       isAwaitingQueryResult = false;
+      // 当前查询已由官网明确返回错误，隐藏上一笔成功结果，避免被误认为本次结果。
+      document.getElementById('ppo-result-banner')?.classList.remove('show');
       const classified = classifyOfficialError('', dialogText);
 
       // 智能双模容错重试：单次查询严格限制最多尝试 2 遍 (第 1 遍 + 容错重试 1 遍)

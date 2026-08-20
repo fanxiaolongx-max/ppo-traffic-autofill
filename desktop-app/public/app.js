@@ -10,7 +10,8 @@ if (hashDesktopToken) sessionStorage.setItem('ppo-desktop-token', hashDesktopTok
 const desktopToken = hashDesktopToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashDesktopToken) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
 const state = { history: [], queue: null, status: null, historyLimit: HISTORY_PAGE_SIZE, historyHasMore: false };
-const plateLetters = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'هـ', 'و', 'ي'];
+const plateLetters = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
+const normalizePlateLetter = value => String(value || '').replaceAll('\u0640', '').trim();
 let activeLetterSlot = 'letter1';
 const steps = {
   queued: '等待执行', starting_browser: '正在启动浏览器', opening_official_site: '正在打开 PPO 官网', initializing_official_form: '正在初始化官网表单',
@@ -72,7 +73,7 @@ function previewLetter(char) {
 
 function initializePlatePicker() {
   $('#letter-palette').innerHTML = plateLetters.map(char =>
-    `<button class="letter-key" type="button" data-char="${char}" title="选择字母 ${char}" aria-label="选择阿拉伯字母 ${char}">${char}</button>`
+    `<button class="letter-key" type="button" data-char="${char}" title="${char === 'ه' ? '蛋形字母 ه（Hāʾ）' : `选择字母 ${char}`}" aria-label="${char === 'ه' ? '选择蛋形阿拉伯字母 ه' : `选择阿拉伯字母 ${char}`}">${char}</button>`
   ).join('');
   document.querySelectorAll('[data-letter-slot]').forEach(slot => {
     slot.addEventListener('click', () => setActiveLetterSlot(slot.dataset.letterSlot));
@@ -351,7 +352,7 @@ $('#query-form').addEventListener('submit', async event => {
 
 $('#saved-profile').addEventListener('change', event => {
   const profile = savedProfiles()[Number(event.target.value)]; if (!profile) return;
-  [$('#letter1').value, $('#letter2').value, $('#letter3').value] = [profile.plate.letters[0] || '', profile.plate.letters[1] || '', profile.plate.letters[2] || ''];
+  [$('#letter1').value, $('#letter2').value, $('#letter3').value] = [profile.plate.letters[0] || '', profile.plate.letters[1] || '', profile.plate.letters[2] || ''].map(normalizePlateLetter);
   $('#plate-number').value = String(profile.plate.number || '').replace(/[^0-9]/g, '').slice(0, 8);
   $('#document-number').value = profile.owner.documentNumber || '';
   $('#remember-full').checked = Boolean(profile.rememberFull);

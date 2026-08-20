@@ -154,7 +154,7 @@ function inspectOfficialPage() {
   if (location.href.includes('traffic-fines-summary') || location.href.includes('traffic?clear=201')) {
     return { kind: 'result', body: body.slice(0, 30_000), url: location.href, title: document.title };
   }
-  const pageError = body.match(/الرقم القومي أو رقم الرخصة غير صحيح[^\n]*|رقم الرخصة غير صحيح[^\n]*|يرجى التحقق[^\n]*|انتهت جلستك[^\n]*|انتهت الجلسة[^\n]*|حدث خطأ أثناء معالجة الطلب[^\n]*|حدث خطأ أثناء تنفيذ الخدمة[^\n]*|الخدمة غير متاحة[^\n]*|502\s+bad gateway[^\n]*|503\s+service[^\n]*|504\s+gateway[^\n]*|gateway timeout[^\n]*/i);
+  const pageError = body.match(/لا توجد? لهذه الرخصة بيانات مسجلة حديثة[^\n]*|التوجه (?:الى|إلى) نيابة المرور المختصة لتحديث البيانات[^\n]*|الرقم القومي أو رقم الرخصة غير صحيح[^\n]*|رقم الرخصة غير صحيح[^\n]*|يرجى التحقق[^\n]*|انتهت جلستك[^\n]*|انتهت الجلسة[^\n]*|حدث خطأ أثناء معالجة الطلب[^\n]*|حدث خطأ أثناء تنفيذ الخدمة[^\n]*|الخدمة غير متاحة[^\n]*|502\s+bad gateway[^\n]*|503\s+service[^\n]*|504\s+gateway[^\n]*|gateway timeout[^\n]*/i);
   if (pageError) return { kind: 'error', text: pageError[0].slice(0, 1500), url: location.href, title: document.title };
   return { kind: 'waiting', url: location.href, title: document.title, bodyLength: body.length, readyState: document.readyState };
 }

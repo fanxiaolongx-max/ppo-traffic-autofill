@@ -20,6 +20,20 @@ test('requires two or three plate letters', () => {
   assert.throws(() => validateQueryPayload({ ...valid, plate: { letters: ['أ'], number: '3413' } }), error => error.code === 'INVALID_PLATE_LETTERS');
 });
 
+test('normalizes the legacy connected Haa glyph to one PPO character', () => {
+  const normalized = validateQueryPayload({ ...valid, plate: { letters: ['ب', 'هـ', 'ن'], number: '392' } });
+  assert.deepEqual([normalized.letter1, normalized.letter2, normalized.letter3], ['ب', 'ه', 'ن']);
+  assert.equal([...normalized.letter2].length, 1);
+});
+
+test('accepts the complete 17-letter Egyptian plate set and rejects excluded letters', () => {
+  const allowed = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
+  for (const letter of allowed) {
+    assert.equal(validateQueryPayload({ ...valid, plate: { letters: ['ب', letter], number: '392' } }).letter2, letter);
+  }
+  assert.throws(() => validateQueryPayload({ ...valid, plate: { letters: ['ب', 'ك'], number: '392' } }), error => error.code === 'INVALID_PLATE_LETTERS');
+});
+
 test('requires a fourteen digit Egyptian national id', () => {
   assert.throws(() => validateQueryPayload({ ...valid, owner: { type: 'national_id', documentNumber: '123' } }), error => error.code === 'INVALID_NATIONAL_ID');
   assert.equal(validateQueryPayload({ ...valid, owner: { type: 'national_id', documentNumber: '12345678901234' } }).ownerType, 'national_id');

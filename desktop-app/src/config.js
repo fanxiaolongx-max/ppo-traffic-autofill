@@ -18,9 +18,9 @@ function bool(name, fallback) {
 
 export const config = Object.freeze({
   appRoot,
-  appVersion,
+  appVersion: process.env.PPO_CORE_VERSION || appVersion,
   host: process.env.PPO_HOST || '0.0.0.0',
-  port: integer('PPO_PORT', 17654, 1),
+  port: integer('PPO_PORT', 17654, 0),
   portAutoIncrement: bool('PPO_PORT_AUTO_INCREMENT', true),
   publicBaseUrl: process.env.PPO_PUBLIC_BASE_URL || '',
   desktopToken: process.env.PPO_DESKTOP_TOKEN || '',

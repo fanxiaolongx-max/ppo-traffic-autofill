@@ -2,6 +2,51 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+function encodeCursor(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function decodeCursor(cursor, type) {
+  if (!cursor) return null;
+  try {
+    const value = JSON.parse(Buffer.from(String(cursor), 'base64url').toString('utf8'));
+    if (!value || value.type !== type) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function normalizedSearch(value) {
+  return String(value || '').toLowerCase().replace(/[•·]/g, '*').replace(/\s+/g, ' ').trim();
+}
+
+function maskedDocument(value) {
+  const text = String(value || '');
+  return text.length > 4 ? `${text.slice(0, 2)}${'*'.repeat(Math.min(8, text.length - 4))}${text.slice(-2)}` : '*'.repeat(text.length);
+}
+
+function querySearchText(row) {
+  const request = typeof row.request_json === 'string' ? JSON.parse(row.request_json || '{}') : (row.request || {});
+  const geo = typeof row.geo_json === 'string' ? JSON.parse(row.geo_json || '{}') : (row.geo || {});
+  const document = String(request.documentNumber || '');
+  const plate = `${[request.letter1, request.letter2, request.letter3].filter(Boolean).join(' ')} ${request.plateNumber || ''}`.trim();
+  return normalizedSearch([
+    row.id, row.trace_id || row.traceId, row.request_id || row.requestId, row.source, row.status,
+    plate, document, maskedDocument(document), row.source_ip || row.sourceIp, row.device_id || row.deviceId,
+    row.user_agent || row.userAgent, geo.country, geo.region, geo.city, geo.isp
+  ].filter(Boolean).join(' '));
+}
+
+function feedbackSearchText(row) {
+  const geo = typeof row.geo_json === 'string' ? JSON.parse(row.geo_json || '{}') : (row.geo || {});
+  return normalizedSearch([
+    row.id, row.device_id || row.deviceId, row.source_ip || row.sourceIp, row.phone, row.wechat,
+    row.content, row.admin_note || row.adminNote, row.user_agent || row.userAgent,
+    geo.country, geo.region, geo.city, geo.isp
+  ].filter(Boolean).join(' '));
+}
+
 export class Store {
   constructor(dataDir) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -23,6 +68,7 @@ export class Store {
         device_id TEXT,
         user_agent TEXT,
         geo_json TEXT,
+        search_text TEXT NOT NULL DEFAULT '',
         request_json TEXT NOT NULL,
         result_json TEXT,
         error_json TEXT,
@@ -36,6 +82,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_queries_created ON queries(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_queries_fingerprint ON queries(fingerprint, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_queries_status ON queries(status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_queries_page ON queries(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_queries_status_page ON queries(status, created_at DESC, id DESC);
       CREATE TABLE IF NOT EXISTS query_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         query_id TEXT NOT NULL,
@@ -71,6 +119,7 @@ export class Store {
         content TEXT NOT NULL,
         page_url TEXT,
         attachments_json TEXT,
+        search_text TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'new',
         admin_note TEXT,
         created_at TEXT NOT NULL,
@@ -78,6 +127,7 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_feedback_page ON feedback(created_at DESC, id DESC);
       CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY,
         value_json TEXT NOT NULL,
@@ -92,25 +142,47 @@ export class Store {
     const columns = new Set(this.db.prepare('PRAGMA table_info(queries)').all().map(column => column.name));
     if (!columns.has('detail')) this.db.exec('ALTER TABLE queries ADD COLUMN detail TEXT');
     if (!columns.has('geo_json')) this.db.exec('ALTER TABLE queries ADD COLUMN geo_json TEXT');
+    if (!columns.has('search_text')) this.db.exec("ALTER TABLE queries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");
     const feedbackColumns = new Set(this.db.prepare('PRAGMA table_info(feedback)').all().map(column => column.name));
     if (!feedbackColumns.has('attachments_json')) this.db.exec('ALTER TABLE feedback ADD COLUMN attachments_json TEXT');
+    if (!feedbackColumns.has('search_text')) this.db.exec("ALTER TABLE feedback ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");
+    this.rebuildSearchText();
     this.db.prepare("UPDATE queries SET status='interrupted', step='process_restarted', finished_at=?, updated_at=? WHERE status='running'")
       .run(new Date().toISOString(), new Date().toISOString());
   }
 
+  rebuildSearchText() {
+    const queryRows = this.db.prepare("SELECT * FROM queries WHERE search_text='' OR search_text IS NULL").all();
+    const feedbackRows = this.db.prepare("SELECT * FROM feedback WHERE search_text='' OR search_text IS NULL").all();
+    if (!queryRows.length && !feedbackRows.length) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const updateQuery = this.db.prepare('UPDATE queries SET search_text=? WHERE id=?');
+      for (const row of queryRows) updateQuery.run(querySearchText(row), row.id);
+      const updateFeedback = this.db.prepare('UPDATE feedback SET search_text=? WHERE id=?');
+      for (const row of feedbackRows) updateFeedback.run(feedbackSearchText(row), row.id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   setQueryGeo(id, geo) {
     this.db.prepare('UPDATE queries SET geo_json=?, updated_at=? WHERE id=?').run(JSON.stringify(geo || {}), new Date().toISOString(), id);
+    const row = this.db.prepare('SELECT * FROM queries WHERE id=?').get(id);
+    if (row) this.db.prepare('UPDATE queries SET search_text=? WHERE id=?').run(querySearchText(row), id);
     return this.getQuery(id);
   }
 
   createQuery(record) {
     this.db.prepare(`INSERT INTO queries (
       id, request_id, trace_id, fingerprint, status, progress, step, source, source_ip,
-      device_id, user_agent, request_json, attempt, created_at, queued_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      device_id, user_agent, search_text, request_json, attempt, created_at, queued_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       record.id, record.requestId, record.traceId, record.fingerprint, record.status,
       record.progress, record.step, record.source, record.sourceIp, record.deviceId,
-      record.userAgent, JSON.stringify(record.request), 0, record.createdAt,
+      record.userAgent, querySearchText(record), JSON.stringify(record.request), 0, record.createdAt,
       record.createdAt, record.createdAt
     );
     this.addEvent(record.id, record.traceId, 'query_created', record);
@@ -133,6 +205,10 @@ export class Store {
     sets.push('updated_at=?');
     values.push(new Date().toISOString(), id);
     this.db.prepare(`UPDATE queries SET ${sets.join(', ')} WHERE id=?`).run(...values);
+    if (patch.status !== undefined) {
+      const row = this.db.prepare('SELECT * FROM queries WHERE id=?').get(id);
+      if (row) this.db.prepare('UPDATE queries SET search_text=? WHERE id=?').run(querySearchText(row), id);
+    }
     const record = this.getQuery(id);
     if (record) this.addEvent(id, record.traceId, 'query_updated', patch);
     return record;
@@ -184,6 +260,29 @@ export class Store {
       .all(deviceId, safeLimit, safeOffset).map(row => this.map(row));
   }
 
+  listPage({ deviceId = '', privileged = false, limit = 20, cursor = '', offset = 0 } = {}) {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const decodedCursor = decodeCursor(cursor, 'history');
+    const conditions = [];
+    const parameters = [];
+    if (!privileged) { conditions.push('device_id=?'); parameters.push(deviceId); }
+    if (decodedCursor?.createdAt && decodedCursor?.id) {
+      conditions.push('(created_at<? OR (created_at=? AND id<?))');
+      parameters.push(decodedCursor.createdAt, decodedCursor.createdAt, decodedCursor.id);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.db.prepare(`SELECT * FROM queries ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...parameters, safeLimit + 1, decodedCursor ? 0 : safeOffset);
+    const hasMore = rows.length > safeLimit;
+    const pageRows = rows.slice(0, safeLimit);
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map(row => this.map(row)), hasMore, limit: safeLimit,
+      nextCursor: hasMore && last ? encodeCursor({ type: 'history', createdAt: last.created_at, id: last.id }) : null
+    };
+  }
+
   listEvents(id) {
     return this.db.prepare('SELECT * FROM query_events WHERE query_id=? ORDER BY id ASC').all(id).map(row => ({
       id: row.id,
@@ -208,9 +307,10 @@ export class Store {
     return { id: Number(result.lastInsertRowid), component, status, code: code || null, message, details: details || {}, createdAt };
   }
 
-  listServiceEventsPage({ limit = 50, offset = 0, sinceIso = '', components = [] } = {}) {
+  listServiceEventsPage({ limit = 50, cursor = '', offset = 0, sinceIso = '', components = [] } = {}) {
     const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
     const safeOffset = Math.max(0, Number(offset) || 0);
+    const decodedCursor = decodeCursor(cursor, 'service');
     const safeComponents = [...new Set(components.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 20);
     const conditions = [];
     const parameters = [];
@@ -219,15 +319,23 @@ export class Store {
       conditions.push(`component IN (${safeComponents.map(() => '?').join(',')})`);
       parameters.push(...safeComponents);
     }
+    const countWhere = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM service_events ${countWhere}`).get(...parameters)?.count || 0);
+    if (decodedCursor?.id) { conditions.push('id<?'); parameters.push(Number(decodedCursor.id)); }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = this.db.prepare(`SELECT * FROM service_events ${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
-      .all(...parameters, safeLimit + 1, safeOffset);
+      .all(...parameters, safeLimit + 1, decodedCursor ? 0 : safeOffset);
     const hasMore = rows.length > safeLimit;
     const items = rows.slice(0, safeLimit).map(row => ({
       id: row.id, component: row.component, status: row.status, code: row.code,
       message: row.message, details: JSON.parse(row.details_json || '{}'), createdAt: row.created_at
     }));
-    return { items, limit: safeLimit, offset: safeOffset, hasMore, nextOffset: hasMore ? safeOffset + items.length : null };
+    const last = items.at(-1);
+    return {
+      items, total, limit: safeLimit, offset: decodedCursor ? null : safeOffset, hasMore,
+      nextOffset: hasMore && !decodedCursor ? safeOffset + items.length : null,
+      nextCursor: hasMore && last ? encodeCursor({ type: 'service', id: last.id }) : null
+    };
   }
 
   listServiceEvents(limit = 50, sinceIso = '') {
@@ -265,33 +373,40 @@ export class Store {
     };
   }
 
-  searchQueries({ query = '', status = '', limit = 50, offset = 0 } = {}) {
+  searchQueries({ query = '', status = '', limit = 50, cursor = '', offset = 0 } = {}) {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     const safeOffset = Math.max(0, Number(offset) || 0);
-    const rows = status
-      ? this.db.prepare('SELECT * FROM queries WHERE status=? ORDER BY created_at DESC LIMIT 5000').all(status)
-      : this.db.prepare('SELECT * FROM queries ORDER BY created_at DESC LIMIT 5000').all();
-    const needle = String(query || '').toLowerCase().replace(/[•·]/g, '*').replace(/\s+/g, ' ').trim();
-    const matches = rows.map(row => this.map(row)).filter(record => {
-      if (!needle) return true;
-      const request = record.request || {};
-      const document = String(request.documentNumber || '');
-      const masked = document.length > 4 ? `${document.slice(0, 2)}${'*'.repeat(Math.min(8, document.length - 4))}${document.slice(-2)}` : '*'.repeat(document.length);
-      const plate = `${[request.letter1, request.letter2, request.letter3].filter(Boolean).join(' ')} ${request.plateNumber || ''}`.trim();
-      const location = [record.geo?.country, record.geo?.region, record.geo?.city, record.geo?.isp, record.sourceIp, record.deviceId, record.userAgent].filter(Boolean).join(' ');
-      return [record.id, record.traceId, record.requestId, record.source, record.status, plate, document, masked, location]
-        .join(' ').toLowerCase().includes(needle);
-    });
-    return { items: matches.slice(safeOffset, safeOffset + safeLimit), total: matches.length, hasMore: safeOffset + safeLimit < matches.length };
+    const decodedCursor = decodeCursor(cursor, 'query');
+    const conditions = [];
+    const parameters = [];
+    if (status) { conditions.push('status=?'); parameters.push(status); }
+    const needle = normalizedSearch(query);
+    if (needle) { conditions.push("search_text LIKE ? ESCAPE '\\'"); parameters.push(`%${needle.replace(/[\\%_]/g, '\\$&')}%`); }
+    const countWhere = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM queries ${countWhere}`).get(...parameters)?.count || 0);
+    if (decodedCursor?.createdAt && decodedCursor?.id) {
+      conditions.push('(created_at<? OR (created_at=? AND id<?))');
+      parameters.push(decodedCursor.createdAt, decodedCursor.createdAt, decodedCursor.id);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.db.prepare(`SELECT * FROM queries ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...parameters, safeLimit + 1, decodedCursor ? 0 : safeOffset);
+    const hasMore = rows.length > safeLimit;
+    const pageRows = rows.slice(0, safeLimit);
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map(row => this.map(row)), total, hasMore,
+      nextCursor: hasMore && last ? encodeCursor({ type: 'query', createdAt: last.created_at, id: last.id }) : null
+    };
   }
 
   createFeedback(record) {
     this.db.prepare(`INSERT INTO feedback
-      (id, device_id, source_ip, user_agent, geo_json, phone, wechat, content, page_url, attachments_json, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).run(
+      (id, device_id, source_ip, user_agent, geo_json, phone, wechat, content, page_url, attachments_json, search_text, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`).run(
       record.id, record.deviceId, record.sourceIp, record.userAgent, record.geo ? JSON.stringify(record.geo) : null,
       record.phone || null, record.wechat || null, record.content, record.pageUrl || null,
-      record.attachments?.length ? JSON.stringify(record.attachments) : null, record.createdAt, record.createdAt
+      record.attachments?.length ? JSON.stringify(record.attachments) : null, feedbackSearchText(record), record.createdAt, record.createdAt
     );
     return this.getFeedback(record.id);
   }
@@ -303,6 +418,8 @@ export class Store {
 
   setFeedbackGeo(id, geo) {
     this.db.prepare('UPDATE feedback SET geo_json=?, updated_at=? WHERE id=?').run(JSON.stringify(geo || {}), new Date().toISOString(), id);
+    const row = this.db.prepare('SELECT * FROM feedback WHERE id=?').get(id);
+    if (row) this.db.prepare('UPDATE feedback SET search_text=? WHERE id=?').run(feedbackSearchText(row), id);
     return this.getFeedback(id);
   }
 
@@ -314,21 +431,36 @@ export class Store {
     if (!sets.length) return this.getFeedback(id);
     sets.push('updated_at=?'); values.push(new Date().toISOString(), id);
     this.db.prepare(`UPDATE feedback SET ${sets.join(', ')} WHERE id=?`).run(...values);
+    const row = this.db.prepare('SELECT * FROM feedback WHERE id=?').get(id);
+    if (row) this.db.prepare('UPDATE feedback SET search_text=? WHERE id=?').run(feedbackSearchText(row), id);
     return this.getFeedback(id);
   }
 
-  listFeedback({ query = '', status = '', limit = 50, offset = 0 } = {}) {
+  listFeedback({ query = '', status = '', limit = 50, cursor = '', offset = 0 } = {}) {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     const safeOffset = Math.max(0, Number(offset) || 0);
-    const rows = status
-      ? this.db.prepare('SELECT * FROM feedback WHERE status=? ORDER BY created_at DESC LIMIT 5000').all(status)
-      : this.db.prepare('SELECT * FROM feedback ORDER BY created_at DESC LIMIT 5000').all();
-    const needle = String(query || '').toLowerCase().trim();
-    const items = rows.map(row => this.mapFeedback(row)).filter(item => !needle || [
-      item.id, item.deviceId, item.sourceIp, item.phone, item.wechat, item.content, item.adminNote,
-      item.geo?.country, item.geo?.region, item.geo?.city, item.geo?.isp, item.userAgent
-    ].filter(Boolean).join(' ').toLowerCase().includes(needle));
-    return { items: items.slice(safeOffset, safeOffset + safeLimit), total: items.length, hasMore: safeOffset + safeLimit < items.length };
+    const decodedCursor = decodeCursor(cursor, 'feedback');
+    const conditions = [];
+    const parameters = [];
+    if (status) { conditions.push('status=?'); parameters.push(status); }
+    const needle = normalizedSearch(query);
+    if (needle) { conditions.push("search_text LIKE ? ESCAPE '\\'"); parameters.push(`%${needle.replace(/[\\%_]/g, '\\$&')}%`); }
+    const countWhere = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const total = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM feedback ${countWhere}`).get(...parameters)?.count || 0);
+    if (decodedCursor?.createdAt && decodedCursor?.id) {
+      conditions.push('(created_at<? OR (created_at=? AND id<?))');
+      parameters.push(decodedCursor.createdAt, decodedCursor.createdAt, decodedCursor.id);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.db.prepare(`SELECT * FROM feedback ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+      .all(...parameters, safeLimit + 1, decodedCursor ? 0 : safeOffset);
+    const hasMore = rows.length > safeLimit;
+    const pageRows = rows.slice(0, safeLimit);
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map(row => this.mapFeedback(row)), total, hasMore,
+      nextCursor: hasMore && last ? encodeCursor({ type: 'feedback', createdAt: last.created_at, id: last.id }) : null
+    };
   }
 
   feedbackStatistics() {
@@ -346,6 +478,10 @@ export class Store {
     this.db.prepare(`INSERT INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`)
       .run(key, JSON.stringify(value), new Date().toISOString());
+  }
+
+  close() {
+    this.db.close();
   }
 
   getIpGeo(ip, cacheDays) {

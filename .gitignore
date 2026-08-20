@@ -8,3 +8,5 @@ desktop-app/data/
 desktop-app/logs/
 desktop-app/.env
 *.log
+.local-secrets/
+desktop-app/dist-core/

@@ -1,0 +1,94 @@
+name: Build and release query core
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop-app/core-version.json'
+      - 'desktop-app/public/**'
+      - 'desktop-app/src/admin-auth.js'
+      - 'desktop-app/src/client-ip.js'
+      - 'desktop-app/src/config.js'
+      - 'desktop-app/src/db.js'
+      - 'desktop-app/src/feedback-attachments.js'
+      - 'desktop-app/src/ip-geo.js'
+      - 'desktop-app/src/logger.js'
+      - 'desktop-app/src/official-error.js'
+      - 'desktop-app/src/query-driver.js'
+      - 'desktop-app/src/queue.js'
+      - 'desktop-app/src/rate-limit.js'
+      - 'desktop-app/src/result-parser.js'
+      - 'desktop-app/src/server.js'
+      - 'desktop-app/src/validation.js'
+      - 'desktop-app/scripts/package-core.mjs'
+      - 'scripts/bump-core-version.mjs'
+      - '.github/workflows/core-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ppo-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-app/package-lock.json
+      - name: Prepare independent core version
+        id: version
+        shell: bash
+        run: |
+          git fetch origin main --tags
+          git checkout -B main origin/main
+          current="$(node -p "require('./desktop-app/core-version.json').version")"
+          if ! git ls-remote --exit-code --tags origin "refs/tags/core-v${current}" >/dev/null 2>&1; then
+            version="${current}"
+          else
+            version="$(node scripts/bump-core-version.mjs)"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add desktop-app/core-version.json
+            git commit -m "chore: bump query core to v${version} [skip ci]"
+            git push origin HEAD:main
+          fi
+          tag="core-v${version}"
+          if ! git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            git tag -a "${tag}" -m "${tag}"
+            git push origin "${tag}"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Install and test core
+        working-directory: desktop-app
+        run: npm ci && npm test
+      - name: Build signed core package
+        working-directory: desktop-app
+        env:
+          CORE_SIGNING_PRIVATE_KEY: ${{ secrets.CORE_SIGNING_PRIVATE_KEY }}
+        run: npm run build:core
+      - name: Verify signature, compatibility and file hashes
+        working-directory: desktop-app
+        run: npm run verify:core
+      - name: Publish core-only GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          asset="desktop-app/dist-core/ppo-query-core-v${VERSION}.zip"
+          test -f "${asset}"
+          tag="core-v${VERSION}"
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${asset}" --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${tag}" "${asset}" --repo "${GITHUB_REPOSITORY}" --title "PPO Query Core v${VERSION}" --notes "Signed hot-update package for PPO Query Hub."
+          fi

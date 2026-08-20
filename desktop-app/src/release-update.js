@@ -17,7 +17,7 @@ export function compareVersions(left, right) {
 
 export async function fetchLatestRelease(repository, fetchImpl = globalThis.fetch, { token = '', manifestUrl = '' } = {}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('GitHub 仓库地址无效');
-  const endpoint = manifestUrl || `https://api.github.com/repos/${repository}/releases/latest`;
+  const endpoint = manifestUrl || `https://api.github.com/repos/${repository}/releases?per_page=30`;
   const response = await fetchImpl(endpoint, {
     headers: {
       accept: 'application/vnd.github+json',
@@ -33,7 +33,8 @@ export async function fetchLatestRelease(repository, fetchImpl = globalThis.fetc
     }
     throw new Error(`更新服务器返回 HTTP ${response.status}`);
   }
-  const release = await response.json();
+  const payload = await response.json();
+  const release = manifestUrl ? payload : (Array.isArray(payload) ? payload.find(item => !item.draft && !item.prerelease && /^v\d+\.\d+\.\d+$/.test(item.tag_name || '')) : payload);
   const version = manifestUrl ? release?.version : release?.tag_name;
   const url = manifestUrl ? release?.url : release?.html_url;
   if (!version || !url) throw new Error('更新版本信息不完整');

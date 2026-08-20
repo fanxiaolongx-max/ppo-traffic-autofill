@@ -9,7 +9,7 @@ const hashDesktopToken = new URLSearchParams(window.location.hash.slice(1)).get(
 if (hashDesktopToken) sessionStorage.setItem('ppo-desktop-token', hashDesktopToken);
 const desktopToken = hashDesktopToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashDesktopToken) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-const state = { history: [], queue: null, status: null, historyLimit: HISTORY_PAGE_SIZE, historyHasMore: false };
+const state = { history: [], queue: null, status: null, historyCursor: '', historyHasMore: false };
 const plateLetters = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
 const normalizePlateLetter = value => String(value || '').replaceAll('\u0640', '').trim();
 let activeLetterSlot = 'letter1';
@@ -137,11 +137,12 @@ async function refresh() {
   try {
     const [health, history, serviceStatus] = await Promise.all([
       api('/api/v1/health'),
-      api(`/api/v1/history?limit=${state.historyLimit}&offset=0`),
+      api(`/api/v1/history?limit=${HISTORY_PAGE_SIZE}`),
       api('/api/v1/status')
     ]);
     state.queue = health.queue;
     state.history = history.items;
+    state.historyCursor = history.nextCursor || '';
     state.status = serviceStatus;
     state.historyHasMore = Boolean(history.hasMore);
     renderAccessMeta(health);
@@ -243,8 +244,8 @@ function renderStatus(data) {
 }
 
 async function loadStatus({ open = false, append = false } = {}) {
-  const offset = append ? (state.status?.events?.length || 0) : 0;
-  const data = await api(`/api/v1/status?limit=${STATUS_PAGE_SIZE}&offset=${offset}`);
+  const cursor = append ? (state.status?.eventsPage?.nextCursor || '') : '';
+  const data = await api(`/api/v1/status?limit=${STATUS_PAGE_SIZE}${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`);
   if (append) data.events = [...(state.status?.events || []), ...data.events];
   state.status = data;
   renderServiceBadge(data);
@@ -370,12 +371,14 @@ $('#document-number').addEventListener('input', event => {
 });
 $('#toggle-document').addEventListener('click', () => { const input = $('#document-number'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggle-document').textContent = t(input.type === 'password' ? '显示' : '隐藏'); });
 $('#close-dialog').addEventListener('click', () => $('#detail-dialog').close());
-$('#refresh-history').addEventListener('click', () => { state.historyLimit = HISTORY_PAGE_SIZE; refresh(); });
+$('#refresh-history').addEventListener('click', () => { state.historyCursor = ''; refresh(); });
 $('#load-more-history').addEventListener('click', async () => {
   const button = $('#load-more-history');
   button.disabled = true; button.textContent = t('正在加载…');
-  state.historyLimit += HISTORY_PAGE_SIZE;
-  try { await refresh(); } catch { state.historyLimit -= HISTORY_PAGE_SIZE; }
+  try {
+    const data = await api(`/api/v1/history?limit=${HISTORY_PAGE_SIZE}${state.historyCursor?`&cursor=${encodeURIComponent(state.historyCursor)}`:''}`);
+    state.history = [...state.history, ...data.items]; state.historyCursor = data.nextCursor || ''; state.historyHasMore = Boolean(data.hasMore); renderHistory();
+  } catch { button.disabled = false; button.textContent = t('加载更多记录'); }
 });
 $('#service-badge').addEventListener('click', () => loadStatus({ open: true }));
 $('#refresh-status').addEventListener('click', () => loadStatus());
@@ -443,7 +446,7 @@ events.onmessage = event => {
     const index = state.history.findIndex(item => item.id === data.query.id);
     if (index >= 0) state.history[index] = { ...state.history[index], ...data.query };
     else state.history.unshift(data.query);
-    state.history = state.history.slice(0, state.historyLimit);
+    state.history = state.history.slice(0, Math.max(HISTORY_PAGE_SIZE, state.history.length));
     if (data.query.status === 'failed') {
       const message = $('#form-message');
       message.textContent = getLanguage()==='en' ? `Query failed: ${data.query.error?.message || 'See the history diagnostics.'}` : `查询失败：${data.query.error?.message || '请查看历史记录中的诊断信息'}`;

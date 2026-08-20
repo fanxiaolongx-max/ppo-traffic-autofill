@@ -42,10 +42,21 @@ writeJson(manifestPath, manifest);
 writeJson(desktopPackagePath, desktopPackage);
 writeJson(desktopLockPath, desktopLock);
 
-for (const relative of ['README.md', 'desktop-app/README.md']) {
-  const file = path.join(root, relative);
-  const content = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(file, content.replaceAll(current, next));
-}
+const rootReadme = path.join(root, 'README.md');
+let rootContent = fs.readFileSync(rootReadme, 'utf8');
+rootContent = rootContent
+  .replace(/^版本：\*\*\d+\.\d+\.\d+\*\*/m, `版本：**${next}**`)
+  .replace(/当前商店版本为 `\d+\.\d+\.\d+`/, `当前商店版本为 \`${next}\``)
+  .replaceAll(`ppo-traffic-autofill-chrome-v${current}.zip`, `ppo-traffic-autofill-chrome-v${next}.zip`)
+  .replaceAll(`ppo-traffic-autofill-edge-v${current}.zip`, `ppo-traffic-autofill-edge-v${next}.zip`)
+  .replaceAll(`v${current}\` 的版本标签`, `v${next}\` 的版本标签`)
+  .replaceAll(`低于 \`${current}\``, `低于 \`${next}\``)
+  .replaceAll(`发布过 \`${current}\``, `发布过 \`${next}\``);
+fs.writeFileSync(rootReadme, rootContent);
+
+const desktopReadme = path.join(root, 'desktop-app', 'README.md');
+let desktopContent = fs.readFileSync(desktopReadme, 'utf8');
+desktopContent = desktopContent.replace(/\{"version":"\d+\.\d+\.\d+","url":/, `{"version":"${next}","url":`);
+fs.writeFileSync(desktopReadme, desktopContent);
 
 process.stdout.write(`${next}\n`);

@@ -67,7 +67,7 @@ heartbeatTimer.unref();
 const publicDir = path.join(config.appRoot, 'public');
 let boundPort = config.port;
 
-function statusSnapshot({ includeInternal = false, eventLimit = 20, eventOffset = 0 } = {}) {
+function statusSnapshot({ includeInternal = false, eventLimit = 20, eventCursor = '', eventOffset = 0 } = {}) {
   const sinceIso = new Date(Date.now() - 86_400_000).toISOString();
   const statistics = store.queryStatistics(sinceIso);
   const serviceEvents = store.listServiceEvents(100, sinceIso);
@@ -78,6 +78,7 @@ function statusSnapshot({ includeInternal = false, eventLimit = 20, eventOffset 
   const officialStatus = circuitOpen ? 'outage' : (officialIsFresh ? latestOfficial.status : 'unknown');
   const publicEventPage = store.listServiceEventsPage({
     limit: eventLimit,
+    cursor: eventCursor,
     offset: eventOffset,
     sinceIso,
     components: ['server', 'official', 'queue']
@@ -112,6 +113,7 @@ function statusSnapshot({ includeInternal = false, eventLimit = 20, eventOffset 
       offset: publicEventPage.offset,
       hasMore: publicEventPage.hasMore,
       nextOffset: publicEventPage.nextOffset,
+      nextCursor: publicEventPage.nextCursor,
       windowHours: 24
     }
   };
@@ -259,6 +261,7 @@ export const server = http.createServer(async (request, response) => {
     if (request.method === 'GET' && url.pathname === '/api/v1/status') {
       return json(response, 200, statusSnapshot({
         eventLimit: Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 20)),
+        eventCursor: url.searchParams.get('cursor') || '',
         eventOffset: Math.max(0, Number(url.searchParams.get('offset')) || 0)
       }));
     }
@@ -314,16 +317,47 @@ export const server = http.createServer(async (request, response) => {
         generatedAt: new Date().toISOString()
       });
     }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/core/status') {
+      requireAdmin(request);
+      const control = globalThis.__PPO_CORE_CONTROL__;
+      return control
+        ? json(response, 200, control.status())
+        : json(response, 503, { error: { code: 'CORE_CONTROL_UNAVAILABLE', message: '当前运行方式不支持核心热更新' } });
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/admin/core/check') {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const control = globalThis.__PPO_CORE_CONTROL__;
+      if (!control) return json(response, 503, { error: { code: 'CORE_CONTROL_UNAVAILABLE', message: '当前运行方式不支持核心热更新' } });
+      try { return json(response, 200, await control.check()); }
+      catch (error) {
+        logger.warn('core_update_check_failed', { error: { message: error.message, code: error.code } });
+        return json(response, 502, { error: { code: 'CORE_UPDATE_CHECK_FAILED', message: error.message } });
+      }
+    }
+    if (request.method === 'POST' && ['/api/v1/admin/core/update', '/api/v1/admin/core/rollback'].includes(url.pathname)) {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const control = globalThis.__PPO_CORE_CONTROL__;
+      if (!control) return json(response, 503, { error: { code: 'CORE_CONTROL_UNAVAILABLE', message: '当前运行方式不支持核心热更新' } });
+      const operation = url.pathname.endsWith('/rollback') ? 'rollback' : 'update';
+      logger.info('core_operation_requested', { operation, sourceIp: clientIp(request), desktop: context.desktop });
+      json(response, 202, { accepted: true, operation, message: operation === 'update' ? '核心更新已开始，切换期间会短暂显示维护页' : '核心回滚已开始' });
+      setTimeout(() => control[operation]().catch?.(error => logger.error('core_operation_failed', { operation, error: { message: error.message, stack: error.stack } })), 100).unref?.();
+      return;
+    }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/logs') {
       requireAdmin(request);
       const limit = Math.min(Number(url.searchParams.get('limit')) || 200, 500);
+      const page = logger.recentPage({
+        limit,
+        cursor: url.searchParams.get('cursor') || '',
+        query: url.searchParams.get('q') || '',
+        level: url.searchParams.get('level') || '',
+        event: url.searchParams.get('event') || ''
+      });
       return json(response, 200, {
-        items: logger.recent({
-          limit,
-          query: url.searchParams.get('q') || '',
-          level: url.searchParams.get('level') || '',
-          event: url.searchParams.get('event') || ''
-        }),
+        ...page,
         logDir: config.logDir,
         diagnosticsDir: path.join(config.dataDir, 'diagnostics'),
         generatedAt: new Date().toISOString()
@@ -335,6 +369,7 @@ export const server = http.createServer(async (request, response) => {
         query: url.searchParams.get('q') || '',
         status: url.searchParams.get('status') || '',
         limit: Math.min(Number(url.searchParams.get('limit')) || 50, 200),
+        cursor: url.searchParams.get('cursor') || '',
         offset: Math.max(0, Number(url.searchParams.get('offset')) || 0)
       });
       return json(response, 200, { ...result, items: result.items.map(adminSummaryRecord) });
@@ -349,7 +384,15 @@ export const server = http.createServer(async (request, response) => {
       requireAdmin(request);
       return json(response, 200, store.listFeedback({
         query: url.searchParams.get('q') || '', status: url.searchParams.get('status') || '',
-        limit: Math.min(Number(url.searchParams.get('limit')) || 50, 200), offset: Math.max(0, Number(url.searchParams.get('offset')) || 0)
+        limit: Math.min(Number(url.searchParams.get('limit')) || 50, 200),
+        cursor: url.searchParams.get('cursor') || '', offset: Math.max(0, Number(url.searchParams.get('offset')) || 0)
+      }));
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/service-events') {
+      requireAdmin(request);
+      return json(response, 200, store.listServiceEventsPage({
+        limit: Math.min(Number(url.searchParams.get('limit')) || 40, 200),
+        cursor: url.searchParams.get('cursor') || ''
       }));
     }
     const adminFeedback = url.pathname.match(/^\/api\/v1\/admin\/feedback\/([^/]+)$/);
@@ -413,13 +456,13 @@ export const server = http.createServer(async (request, response) => {
       const privileged = isPrivileged(request);
       const deviceId = deviceIdentity(request, url, { privileged });
       const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 20), 100);
-      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-      const batch = privileged ? store.list(limit + 1, [], offset) : store.listByDevice(deviceId, limit + 1, [], offset);
+      const page = store.listPage({
+        deviceId, privileged, limit, cursor: url.searchParams.get('cursor') || '',
+        offset: Math.max(0, Number(url.searchParams.get('offset')) || 0)
+      });
       return json(response, 200, {
-        items: batch.slice(0, limit).map(item => publicRecord(item, true)),
-        hasMore: batch.length > limit,
-        offset,
-        limit
+        ...page,
+        items: page.items.map(item => publicRecord(item, true))
       });
     }
     if (request.method === 'POST' && url.pathname === '/api/v1/feedback') {
@@ -529,10 +572,10 @@ async function startServer() {
     const port = config.port + offset;
     try {
       await listen(port, config.host);
-      boundPort = port;
-      logger.info('server_started', { host: config.host, port, preferredPort: config.port, url: config.publicBaseUrl || `http://127.0.0.1:${port}` });
-      store.addServiceEvent('server', 'operational', 'SERVER_STARTED', '查询服务已启动', { port }, { force: true });
-      return { port, host: config.host };
+      boundPort = server.address()?.port || port;
+      logger.info('server_started', { host: config.host, port: boundPort, preferredPort: config.port, url: config.publicBaseUrl || `http://127.0.0.1:${boundPort}` });
+      store.addServiceEvent('server', 'operational', 'SERVER_STARTED', '查询服务已启动', { port: boundPort }, { force: true });
+      return { port: boundPort, host: config.host };
     } catch (error) {
       if (error.code !== 'EADDRINUSE' || offset === maxAttempts - 1) {
         logger.error('server_start_failed', { port, error: { code: error.code, message: error.message } });
@@ -547,6 +590,18 @@ async function startServer() {
 export const serverReady = startServer();
 
 let closing = false;
+export async function prepareForCoreSwitch(timeoutMs = 180_000) {
+  queue.beginMaintenance();
+  logger.info('core_switch_drain_started', { queuedCount: queue.pending.length, running: Boolean(queue.currentId) });
+  await queue.waitForIdle(timeoutMs);
+  logger.info('core_switch_drain_completed', {});
+}
+
+export function cancelCoreSwitch() {
+  queue.endMaintenance();
+  logger.warn('core_switch_cancelled', {});
+}
+
 export async function shutdownServer(signal) {
   if (closing) return;
   closing = true;
@@ -556,6 +611,9 @@ export async function shutdownServer(signal) {
   for (const client of clients) client.response.end();
   await new Promise(resolve => server.close(resolve));
   await driver.close();
+  store.close();
 }
-process.on('SIGINT', () => shutdownServer('SIGINT').finally(() => process.exit(0)));
-process.on('SIGTERM', () => shutdownServer('SIGTERM').finally(() => process.exit(0)));
+if (!globalThis.__PPO_CORE_SHELL__) {
+  process.on('SIGINT', () => shutdownServer('SIGINT').finally(() => process.exit(0)));
+  process.on('SIGTERM', () => shutdownServer('SIGTERM').finally(() => process.exit(0)));
+}

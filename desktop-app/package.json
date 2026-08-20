@@ -1,6 +1,6 @@
 {
   "name": "ppo-query-hub",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": true,
   "description": "All-in-one PPO desktop query app with mobile web UI and external API",
   "repository": "https://github.com/fanxiaolongx-max/ppo-traffic-autofill",
@@ -11,13 +11,17 @@
     "start": "electron .",
     "dev": "PPO_LOG_LEVEL=debug electron .",
     "test": "node --test",
+    "build:core": "node scripts/package-core.mjs",
+    "verify:core": "node scripts/verify-core-package.mjs",
     "pack": "electron-builder --dir",
     "build": "electron-builder"
   },
   "engines": {
     "node": ">=22.5.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "adm-zip": "^0.6.0"
+  },
   "devDependencies": {
     "electron": "^43.4.1",
     "electron-builder": "^26.0.12"
@@ -30,6 +34,7 @@
       "src/**/*",
       "public/**/*",
       "assets/**/*",
+      "core-version.json",
       "package.json"
     ],
     "mac": {

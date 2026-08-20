@@ -32,3 +32,22 @@ test('writes one physical JSON line with UTC and local timestamps and supports f
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('paginates matching structured logs with an opaque cursor', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ppo-logger-page-test-'));
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const logger = new AuditLogger(directory);
+    for (let index = 0; index < 7; index += 1) logger.info('query_completed', { traceId: `tr_${index}`, plate: `plate ${index}` });
+    const first = logger.recentPage({ event: 'query_completed', limit: 3 });
+    const second = logger.recentPage({ event: 'query_completed', limit: 3, cursor: first.nextCursor });
+    assert.equal(first.items.length, 3);
+    assert.equal(first.hasMore, true);
+    assert.equal(second.items.length, 3);
+    assert.equal(new Set([...first.items, ...second.items].map(item => item.traceId)).size, 6);
+  } finally {
+    console.log = originalLog;
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

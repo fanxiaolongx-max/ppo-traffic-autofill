@@ -4,14 +4,37 @@ on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    # These files are shipped by the independently signed core workflow. A
+    # core-only change must not rebuild the stable Electron shell.
+    paths-ignore:
+      - 'desktop-app/core-version.json'
+      - 'desktop-app/public/**'
+      - 'desktop-app/src/admin-auth.js'
+      - 'desktop-app/src/client-ip.js'
+      - 'desktop-app/src/config.js'
+      - 'desktop-app/src/db.js'
+      - 'desktop-app/src/feedback-attachments.js'
+      - 'desktop-app/src/ip-geo.js'
+      - 'desktop-app/src/logger.js'
+      - 'desktop-app/src/official-error.js'
+      - 'desktop-app/src/query-driver.js'
+      - 'desktop-app/src/queue.js'
+      - 'desktop-app/src/rate-limit.js'
+      - 'desktop-app/src/result-parser.js'
+      - 'desktop-app/src/server.js'
+      - 'desktop-app/src/validation.js'
+      - 'desktop-app/scripts/package-core.mjs'
+      - 'desktop-app/scripts/verify-core-package.mjs'
+      - 'scripts/bump-core-version.mjs'
+      - '.github/workflows/core-release.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-release-${{ github.ref }}
-  cancel-in-progress: true
+  group: ppo-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   prepare-version:
@@ -171,10 +194,41 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  query-core:
+    name: Signed query core package
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-app/package-lock.json
+      - name: Install core verifier dependencies
+        working-directory: desktop-app
+        run: npm ci
+      - name: Build signed hot-update core
+        working-directory: desktop-app
+        env:
+          CORE_SIGNING_PRIVATE_KEY: ${{ secrets.CORE_SIGNING_PRIVATE_KEY }}
+        run: npm run build:core
+      - name: Verify signature, compatibility and file hashes
+        working-directory: desktop-app
+        run: npm run verify:core
+      - uses: actions/upload-artifact@v5
+        with:
+          name: query-core
+          path: desktop-app/dist-core/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
   github-release:
     name: Publish GitHub Release
     if: needs.prepare-version.outputs.release_tag != ''
-    needs: [prepare-version, browser-extensions, macos-app]
+    needs: [prepare-version, browser-extensions, macos-app, query-core]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -191,7 +245,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-version.outputs.release_tag }}
         run: |
           mapfile -t files < <(find release-assets -maxdepth 1 -type f -print | sort)
-          test "${#files[@]}" -eq 4
+          test "${#files[@]}" -eq 5
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "${files[@]}" --clobber --repo "${GITHUB_REPOSITORY}"
           else

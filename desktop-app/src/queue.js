@@ -27,6 +27,7 @@ export class QueryQueue {
     this.pending = [];
     this.running = false;
     this.currentId = null;
+    this.maintenance = false;
     this.failureStreak = 0;
     this.circuitOpenUntil = 0;
     for (const record of store.list(500, ['queued']).reverse()) this.pending.push(record.id);
@@ -43,6 +44,11 @@ export class QueryQueue {
   }
 
   enqueue(request, meta) {
+    if (this.maintenance) {
+      throw Object.assign(new Error('服务正在平滑更新，请稍后再试'), {
+        code: 'CORE_MAINTENANCE', statusCode: 503, retryAfterMs: 5_000
+      });
+    }
     if (meta.requestId) {
       const existing = this.store.getByRequestId(meta.requestId, meta.deviceId);
       if (existing) {
@@ -224,6 +230,26 @@ export class QueryQueue {
     };
   }
 
+  beginMaintenance() {
+    this.maintenance = true;
+    this.store.addServiceEvent?.('server', 'degraded', 'CORE_MAINTENANCE', '正在排空队列并切换查询内核', {}, { force: true });
+    this.broadcast(null);
+  }
+
+  endMaintenance() {
+    this.maintenance = false;
+    this.broadcast(null);
+    this.drain();
+  }
+
+  async waitForIdle(timeoutMs = 180_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (this.running || this.currentId || this.pending.length) {
+      if (Date.now() >= deadline) throw new Error('等待查询队列排空超时');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
   publicSnapshot(deviceId = '') {
     const now = Date.now();
     const raw = this.snapshot();
@@ -238,7 +264,8 @@ export class QueryQueue {
       runningCount: raw.running ? 1 : 0,
       queuedCount: raw.queued.length,
       capacity: this.config.queueMax,
-      accepting: !circuitOpen && raw.queued.length + (raw.running ? 1 : 0) < this.config.queueMax,
+      accepting: !this.maintenance && !circuitOpen && raw.queued.length + (raw.running ? 1 : 0) < this.config.queueMax,
+      maintenance: this.maintenance,
       running: ownRunning,
       queued: ownQueued,
       circuit: {

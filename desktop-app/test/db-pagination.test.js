@@ -86,13 +86,16 @@ test('paginates public service status records twenty at a time', () => {
     const options = { limit:20, components:['server', 'official'] };
     const first = store.listServiceEventsPage(options);
     const second = store.listServiceEventsPage({ ...options, offset:20 });
+    const cursorSecond = store.listServiceEventsPage({ ...options, cursor:first.nextCursor });
     assert.equal(first.items.length, 20);
+    assert.equal(first.total, 33);
     assert.equal(first.hasMore, true);
     assert.equal(first.nextOffset, 20);
     assert.ok(second.items.length > 0 && second.items.length <= 20);
     assert.ok(first.items.every(item => ['server', 'official'].includes(item.component)));
     assert.ok(second.items.every(item => ['server', 'official'].includes(item.component)));
     assert.equal(new Set([...first.items, ...second.items].map(item => item.id)).size, first.items.length + second.items.length);
+    assert.deepEqual(cursorSecond.items.map(item=>item.id), second.items.map(item=>item.id));
   } finally {
     fs.rmSync(directory, { recursive:true, force:true });
   }
@@ -115,4 +118,20 @@ test('stores searchable feedback, client geography and admin settings', () => {
     store.setIpGeo('8.8.8.8', { country:'美国' });
     assert.equal(store.getIpGeo('8.8.8.8', 30).country, '美国');
   } finally { fs.rmSync(directory, { recursive:true, force:true }); }
+});
+
+test('uses stable cursors for admin query and feedback pages', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ppo-admin-cursor-test-'));
+  try {
+    const store = new Store(directory);
+    for (let index = 0; index < 5; index += 1) {
+      const createdAt = new Date(Date.UTC(2026, 7, 20, 12, 0, index)).toISOString();
+      store.createQuery({ id:`query-${index}`, requestId:null, traceId:`tr-${index}`, fingerprint:`fp-${index}`, status:'queued', progress:0, step:'queued', source:'test', sourceIp:'8.8.8.8', deviceId:'device', userAgent:'test', request:{letter1:'أ',letter2:'ف',plateNumber:String(index),documentNumber:`EC00000${index}`,ownerType:'passport'}, createdAt });
+      store.createFeedback({ id:`fb_00000000-0000-4000-8000-00000000000${index}`, deviceId:'device', sourceIp:'8.8.8.8', userAgent:'test', content:`feedback ${index}`, createdAt });
+    }
+    const queries1=store.searchQueries({limit:2}); const queries2=store.searchQueries({limit:2,cursor:queries1.nextCursor});
+    assert.equal(queries1.items.length,2); assert.equal(queries1.hasMore,true); assert.equal(new Set([...queries1.items,...queries2.items].map(item=>item.id)).size,4);
+    const feedback1=store.listFeedback({limit:2}); const feedback2=store.listFeedback({limit:2,cursor:feedback1.nextCursor});
+    assert.equal(feedback1.items.length,2); assert.equal(feedback1.total,5); assert.equal(new Set([...feedback1.items,...feedback2.items].map(item=>item.id)).size,4);
+  } finally { fs.rmSync(directory,{recursive:true,force:true}); }
 });

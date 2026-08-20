@@ -32,6 +32,21 @@ function normalizeSearch(value) {
   return String(value || '').toLowerCase().replace(/[•·]/g, '*').replace(/\s+/g, ' ').trim();
 }
 
+function encodeCursor(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function decodeCursor(cursor) {
+  if (!cursor) return null;
+  try {
+    const value = JSON.parse(Buffer.from(String(cursor), 'base64url').toString('utf8'));
+    if (!value || typeof value.file !== 'string' || !Number.isInteger(value.line)) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 export class AuditLogger {
   constructor(logDir) {
     this.logDir = logDir;
@@ -63,7 +78,7 @@ export class AuditLogger {
     output(line.trim());
   }
 
-  recent(options = 200) {
+  recentPage(options = 200) {
     const input = typeof options === 'object' ? options : { limit: options };
     const safeLimit = Math.max(1, Math.min(2000, Number(input.limit) || 200));
     const query = normalizeSearch(input.query);
@@ -72,21 +87,38 @@ export class AuditLogger {
     const files = fs.readdirSync(this.logDir)
       .filter(name => /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name))
       .sort().reverse();
+    const cursor = decodeCursor(input.cursor);
     const entries = [];
+    let nextCursor = null;
+    let cursorReached = !cursor;
     for (const name of files) {
       const lines = fs.readFileSync(path.join(this.logDir, name), 'utf8').split('\n').filter(Boolean);
-      for (let index = lines.length - 1; index >= 0 && entries.length < safeLimit; index -= 1) {
+      let startIndex = lines.length - 1;
+      if (!cursorReached) {
+        if (name !== cursor.file) continue;
+        cursorReached = true;
+        startIndex = Math.min(cursor.line, lines.length - 1);
+      }
+      for (let index = startIndex; index >= 0; index -= 1) {
         let entry;
         try { entry = JSON.parse(lines[index]); }
         catch { entry = { timestamp: '', localTimestamp: '', level: 'error', event: 'invalid_log_line', raw: lines[index].slice(0, 2000) }; }
         if (level && String(entry.level || '').toLowerCase() !== level) continue;
         if (event && !String(entry.event || '').toLowerCase().includes(event)) continue;
         if (query && !normalizeSearch(JSON.stringify(entry)).includes(query)) continue;
+        if (entries.length >= safeLimit) {
+          nextCursor = encodeCursor({ file: name, line: index });
+          break;
+        }
         entries.push(entry);
       }
-      if (entries.length >= safeLimit) break;
+      if (nextCursor) break;
     }
-    return entries;
+    return { items: entries, hasMore: Boolean(nextCursor), nextCursor };
+  }
+
+  recent(options = 200) {
+    return this.recentPage(options).items;
   }
 
   info(event, details) { this.write('info', event, details); }

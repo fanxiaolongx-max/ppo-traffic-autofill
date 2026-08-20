@@ -13,6 +13,7 @@
 - 查询页与 Admin 共用的中文/英文、亮色/暗色主题偏好
 - 可公开查看的服务器/PPO 官网服务状态面板
 - Electron 内置 Chromium/PPO 会话
+- 稳定端口网关、签名业务内核热更新、健康检查和自动回滚
 
 不需要 PM2，也没有需要分别启动的前端、后端服务。
 
@@ -28,6 +29,7 @@
 - 复制当前访问地址
 - 开启或关闭开机自动启动；登录启动时默认只驻留菜单栏，不主动弹出窗口
 - 检查 GitHub 最新 Release、打开新版下载页
+- 检查、下载、平滑切换查询核心，并可回滚到上一核心
 - 显示当前程序版本、服务端口和运行状态
 - 完全退出程序并安全停止服务
 
@@ -74,7 +76,15 @@ npm run build
 
 macOS 生成 DMG/ZIP，Windows 生成安装包和便携版。打包结果位于 `dist/`。
 
-仓库根目录的 GitHub Actions 会在每次推送到 `main` 时自动构建 Chrome、Edge 和 macOS Universal 产物；推送与扩展版本一致的 `v*.*.*` 标签时，还会自动创建 GitHub Release。macOS 正式对外分发建议在 GitHub 仓库的 Actions Secrets 中配置：
+查询核心可独立打包，不重新构建完整 App：
+
+```bash
+CORE_SIGNING_PRIVATE_KEY_FILE=../.local-secrets/core-update-private.pem npm run build:core
+```
+
+输出位于 `dist-core/ppo-query-core-vX.Y.Z.zip`。核心包包含 Web UI、API、队列、PPO 查询驱动、错误分类和数据访问代码，不包含 Electron 外壳、托盘、网关或本地运行数据。
+
+仓库根目录的 GitHub Actions 会在稳定外壳或浏览器扩展变更推送到 `main` 时自动构建 Chrome、Edge、macOS Universal 和签名查询核心产物；只有核心代码变化时，`core-release.yml` 会独立递增核心版本并创建 `core-vX.Y.Z` Release，不重新打包完整 App。核心私钥只保存在本机忽略目录和 GitHub Secret `CORE_SIGNING_PRIVATE_KEY`，App 内只包含 Ed25519 验签公钥。
 
 - `MAC_CSC_LINK`：Developer ID Application 证书的 base64 或私密下载地址
 - `MAC_CSC_KEY_PASSWORD`：证书密码
@@ -158,12 +168,21 @@ Admin 页面提供：
 - 查询失败、查询成功、护照重试、流控、熔断、队列和服务启停快捷筛选
 - 服务器、PPO 官网、成功率、队列和流控指标及状态历史
 - 用户反馈的正文、可选手机号/微信号、截图或文件、访问页面及客户端信息，可搜索、预览/下载附件、备注并标记未读/已读/已处理/已归档
+- 查询核心的外壳版本、当前/上一/已安装版本、在线检查、平滑更新和人工回滚
+
+所有长期增长列表均使用服务端游标分页：查询与反馈每批 50 条，结构化日志每批 50 条，Admin 服务状态每批 10 条，公开历史和状态每批 20 条。页面始终显示已加载数量和是否还有更多，不再因为记录不足一批而让分页状态完全消失。游标基于稳定的时间与主键位置，新记录写入不会导致翻页重复或漏项；查询和反馈搜索直接作用于完整 SQLite 数据，不再只扫描最近 5000 条。旧版 `offset` 参数仅为兼容保留。
 
 ## 检查更新
 
-GitHub 私有仓库的 Release 对未认证客户端固定返回 404，不能把仓库 Token 内置到安装包。正式分发时建议将发布仓库设为公开，或配置公开的 `PPO_UPDATE_MANIFEST_URL`；清单格式为 `{"version":"1.0.8","url":"https://下载页面或安装包地址"}`。开发者本机也可临时通过 `PPO_GITHUB_TOKEN` 检查私有仓库，但不要将 Token 写入 `.env` 后分发、提交源码或放进 CI 产物。
+GitHub 私有仓库的 Release 对未认证客户端固定返回 404，不能把仓库 Token 内置到安装包。正式分发时建议将发布仓库设为公开，或配置公开的 `PPO_UPDATE_MANIFEST_URL`；清单格式为 `{"version":"1.0.9","url":"https://下载页面或安装包地址"}`。开发者本机也可临时通过 `PPO_GITHUB_TOKEN` 检查私有仓库，但不要将 Token 写入 `.env` 后分发、提交源码或放进 CI 产物。
 
 完整信息只在 Admin 管理后台显示；普通 GUI 查询页不再提供详细日志窗口。
+
+### 稳定外壳与查询核心
+
+完整 App 自带一个可离线启动的内置核心。外壳始终占用公开端口，核心只监听本机随机内部端口；更新期间外壳返回中英文维护页和 `CORE_MAINTENANCE` API 状态。切换顺序为“停止接收新任务 → 完成已有运行/排队任务 → 关闭旧核心并备份 SQLite → 启动新核心 → 核对版本和健康接口 → 原子记录新版本 → 恢复流量”。健康检查失败时会恢复数据库备份并启动旧核心。
+
+下载核心必须通过内置 Ed25519 公钥验签，同时验证完整文件清单、SHA-256、外壳兼容范围、压缩路径、符号链接、文件数量和解压体积。核心保存在应用数据目录的 `core-runtime/versions/`，状态文件采用原子替换；最近版本和内置核心作为回滚保障。Electron、托盘、网关、验签公钥或原生依赖变化仍需发布完整 App。
 
 ## 数据位置
 
@@ -173,6 +192,8 @@ GitHub 私有仓库的 Release 对未认证客户端固定返回 404，不能把
 - Chromium/PPO 会话：应用数据目录下的 Electron `Partitions/ppo-query-engine/`
 - 审计日志：`logs/audit-YYYY-MM-DD.jsonl`
 - 官网异常诊断：`data/diagnostics/*.json` 和 `*.png`
+- 可热切换核心：`core-runtime/versions/<version>/`
+- 核心切换前数据库备份：`core-runtime/backups/*.sqlite`
 
 SQLite 保存完整查询参数、客户端信息、反馈、来源、结果、服务状态及事件，便于按 `traceId`、车牌、设备 ID 或 IP 追溯；JSONL 日志每条记录严格占一个物理行，同时保存 UTC `timestamp` 与带时区偏移的服务器 `localTimestamp`。查询生命周期日志统一包含 `queryId`、`traceId`、阿拉伯车牌、脱敏证件、事件名和级别，并记录流控拒绝、队列已满、任务复用、熔断、护照格式重试、反馈和管理员登录事件及服务启停。
 

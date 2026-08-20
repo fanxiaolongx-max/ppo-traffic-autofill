@@ -45,6 +45,19 @@ function renderMetrics(status) {
   ].map(([label,css,value,note])=>`<article class="metric"><span>${escapeHtml(label)}</span><strong>${css?`<i class="${escapeHtml(css)}"></i>`:''}${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></article>`).join('');
 }
 
+function renderEventStreams(streams) {
+  const english=getLanguage()==='en';
+  $('#event-stream-summary').textContent=english?`Updated ${formatTime(state.overview?.generatedAt)}`:`更新于 ${formatTime(state.overview?.generatedAt)}`;
+  $('#event-stream-metrics').innerHTML=[
+    [english?'Active connections':'当前连接',`${streams.total} / ${streams.limit}`],
+    [english?'Remaining capacity':'剩余容量',streams.remaining],
+    [english?'Source IPs':'来源 IP',streams.uniqueIps],
+    [english?'Devices':'设备数',streams.uniqueDevices],
+    [english?'Per-IP limit':'单 IP 上限',streams.perIpLimit]
+  ].map(([label,value])=>`<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
+  $('#event-stream-body').innerHTML=streams.byIp.map(group=>`<tr><td class="mono">${escapeHtml(group.ip)}</td><td><strong class="connection-count${group.count>=group.limit?' at-limit':''}">${escapeHtml(group.count)} / ${escapeHtml(group.limit)}</strong></td><td>${escapeHtml(group.devices.length)}</td><td>${group.devices.map(device=>`<span class="mono connection-device">${escapeHtml(device.deviceId)} <b>×${escapeHtml(device.count)}</b></span>`).join('')}</td><td class="nowrap">${formatTime(group.oldestConnectedAt)}</td><td class="nowrap">${formatTime(group.lastActivityAt)}</td></tr>`).join('')||`<tr><td colspan="6" class="muted">${english?'No active SSE connections':'当前没有 SSE 实时连接'}</td></tr>`;
+}
+
 function renderQueue(queue) {
   const rows=[]; if(queue.running) rows.push({...queue.running,queuePosition:'执行中'}); queue.queued.forEach((record,index)=>rows.push({...record,queuePosition:index+1}));
   $('#queue-body').innerHTML=rows.map(record=>`<tr><td>${escapeHtml(record.queuePosition==='执行中'?statusLabel('running'):record.queuePosition)}</td><td><span class="status ${escapeHtml(record.status)}"><i></i>${statusLabel(record.status)}</span></td><td class="mono nowrap">${escapeHtml(requestSummary(record))}</td><td class="mono">${escapeHtml(record.request?.documentNumber||'—')}</td><td><button class="search-value mono" data-search-log="${escapeHtml(record.traceId)}">${escapeHtml(record.traceId)}</button></td><td><span class="mono">${escapeHtml(record.deviceId||'—')}</span><small class="muted block">${escapeHtml(record.sourceIp||'—')} · ${escapeHtml(geoText(record.geo))}</small></td><td>${escapeHtml(record.progress)}% · ${escapeHtml(record.step)}</td></tr>`).join('')||(getLanguage()==='en'?'<tr><td colspan="7" class="muted">No running or queued tasks</td></tr>':'<tr><td colspan="7" class="muted">当前没有运行或排队任务</td></tr>');
@@ -65,7 +78,7 @@ async function loadServiceEvents({append=false}={}) {
 }
 
 async function loadOverview() {
-  const data=await adminApi('/api/v1/admin/overview'); state.overview=data; renderMetrics(data.status); renderQueue(data.queue);
+  const data=await adminApi('/api/v1/admin/overview'); state.overview=data; renderMetrics(data.status); renderEventStreams(data.eventStreams); renderQueue(data.queue);
   const unread=data.feedback?.unread||0; $('#feedback-unread').textContent=unread; $('#feedback-unread').classList.toggle('hidden',!unread);
   $('#admin-live').className='live online'; $('#admin-live').innerHTML=`<i></i>${t('已连接')}`;
 }

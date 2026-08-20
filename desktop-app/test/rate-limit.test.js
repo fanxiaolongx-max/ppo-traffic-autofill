@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RateLimiter } from '../src/rate-limit.js';
+import { RateLimiter, summarizeEventStreams } from '../src/rate-limit.js';
 
 test('limits anonymous clients and exempts valid privileged requests', () => {
   const limiter = new RateLimiter({ ipPerMinute: 2, ipPerDay: 30, deviceCooldownMs: 0, ipSubmissionPerMinute: 10 });
@@ -41,4 +41,23 @@ test('limits feedback independently by device and IP', () => {
   assert.equal(limiter.checkFeedback({ ip: '1.2.3.4', deviceId: 'device-a' }).allowed, true);
   assert.equal(limiter.checkFeedback({ ip: '1.2.3.4', deviceId: 'device-a' }).code, 'FEEDBACK_RATE_HOUR');
   assert.equal(limiter.checkFeedback({ ip: '1.2.3.4', deviceId: 'device-b' }).allowed, true);
+});
+
+test('summarizes live event streams by IP and device without losing duplicate connections', () => {
+  const now = Date.parse('2026-08-20T20:00:00.000Z');
+  const clients = new Set([
+    { ip:'1.2.3.4', deviceId:'device-a', connectedAt:now-60_000, lastActivityAt:now-5_000 },
+    { ip:'1.2.3.4', deviceId:'device-a', connectedAt:now-30_000, lastActivityAt:now-2_000 },
+    { ip:'5.6.7.8', deviceId:'device-b', connectedAt:now-10_000, lastActivityAt:now-1_000 }
+  ]);
+  const summary = summarizeEventStreams(clients, { maxEventClients:100, maxEventClientsPerIp:5 }, now);
+  assert.equal(summary.total, 3);
+  assert.equal(summary.remaining, 97);
+  assert.equal(summary.uniqueIps, 2);
+  assert.equal(summary.uniqueDevices, 2);
+  assert.equal(summary.byIp[0].ip, '1.2.3.4');
+  assert.equal(summary.byIp[0].count, 2);
+  assert.deepEqual(summary.byIp[0].devices, [{ deviceId:'device-a', count:2 }]);
+  assert.equal(summary.byIp[0].oldestConnectedAt, '2026-08-20T19:59:00.000Z');
+  assert.equal(summary.byIp[0].lastActivityAt, '2026-08-20T19:59:58.000Z');
 });

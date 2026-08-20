@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { config } from './config.js';
 import { Store } from './db.js';
 import { AuditLogger } from './logger.js';
-import { RateLimiter } from './rate-limit.js';
+import { RateLimiter, summarizeEventStreams } from './rate-limit.js';
 import { PPOQueryDriver } from './query-driver.js';
 import { QueryQueue, publicEvent, publicRecord } from './queue.js';
 import { parseOfficialSummary } from './result-parser.js';
@@ -31,7 +31,7 @@ function sendEvent(client, payload) {
     clients.delete(client);
     return;
   }
-  try { client.response.write(payload); }
+  try { client.response.write(payload); client.lastActivityAt = Date.now(); }
   catch { clients.delete(client); }
 }
 const broadcast = record => {
@@ -313,6 +313,7 @@ export const server = http.createServer(async (request, response) => {
       return json(response, 200, {
         status: statusSnapshot({ includeInternal: true }),
         queue: queue.snapshot(),
+        eventStreams: summarizeEventStreams(clients, config),
         feedback: store.feedbackStatistics(),
         generatedAt: new Date().toISOString()
       });
@@ -445,13 +446,14 @@ export const server = http.createServer(async (request, response) => {
       const ip = clientIp(request);
       const sameIpClients = [...clients].filter(client => client.ip === ip).length;
       if (clients.size >= config.maxEventClients || sameIpClients >= config.maxEventClientsPerIp) {
-        logger.warn('event_stream_rejected', { sourceIp: ip, maxEventClients: config.maxEventClients, maxEventClientsPerIp: config.maxEventClientsPerIp });
+        logger.warn('event_stream_rejected', { sourceIp: ip, currentEventClients: clients.size, currentEventClientsForIp: sameIpClients, maxEventClients: config.maxEventClients, maxEventClientsPerIp: config.maxEventClientsPerIp });
         store.addServiceEvent('rate_limit', 'warning', 'SSE_LIMIT', '实时状态连接达到流控上限', { sourceIp: ip }, { force: true });
         return json(response, 503, { error: { code: 'EVENT_CLIENTS_FULL', message: '实时连接数已满，请稍后重试' } }, { 'retry-after': '30' });
       }
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       response.write(`data: ${JSON.stringify({ type: 'snapshot', queue: queue.publicSnapshot(deviceId) })}\n\n`);
-      const client = { response, deviceId, ip };
+      const connectedAt = Date.now();
+      const client = { response, deviceId, ip, connectedAt, lastActivityAt: connectedAt };
       clients.add(client);
       request.on('close', () => clients.delete(client));
       return;

@@ -82,3 +82,35 @@ export class RateLimiter {
     for (const [key, value] of this.devices) if (now - value > 86_400_000) this.devices.delete(key);
   }
 }
+
+export function summarizeEventStreams(clients, { maxEventClients, maxEventClientsPerIp }, now = Date.now()) {
+  const byIp = new Map();
+  const deviceIds = new Set();
+  for (const client of clients) {
+    const ip = client.ip || 'unknown';
+    const deviceId = client.deviceId || 'unknown';
+    deviceIds.add(deviceId);
+    const group = byIp.get(ip) || { ip, count: 0, devices: new Map(), oldestConnectedAt: now, lastActivityAt: 0 };
+    group.count += 1;
+    group.devices.set(deviceId, (group.devices.get(deviceId) || 0) + 1);
+    group.oldestConnectedAt = Math.min(group.oldestConnectedAt, client.connectedAt || now);
+    group.lastActivityAt = Math.max(group.lastActivityAt, client.lastActivityAt || client.connectedAt || now);
+    byIp.set(ip, group);
+  }
+  return {
+    total: clients.size,
+    limit: maxEventClients,
+    remaining: Math.max(0, maxEventClients - clients.size),
+    uniqueIps: byIp.size,
+    uniqueDevices: deviceIds.size,
+    perIpLimit: maxEventClientsPerIp,
+    byIp: [...byIp.values()].sort((a, b) => b.count - a.count || a.ip.localeCompare(b.ip)).map(group => ({
+      ip: group.ip,
+      count: group.count,
+      limit: maxEventClientsPerIp,
+      oldestConnectedAt: new Date(group.oldestConnectedAt).toISOString(),
+      lastActivityAt: new Date(group.lastActivityAt).toISOString(),
+      devices: [...group.devices].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([deviceId, count]) => ({ deviceId, count }))
+    }))
+  };
+}

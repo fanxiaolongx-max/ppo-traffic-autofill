@@ -7,8 +7,10 @@ on:
     # These files are shipped by the independently signed core workflow. A
     # core-only change must not rebuild the stable Electron shell.
     paths-ignore:
+      - '.github/workflows/build-release.yml'
       - 'README.md'
       - 'desktop-app/README.md'
+      - 'desktop-app/test/**'
       - 'desktop-app/core-version.json'
       - 'desktop-app/public/**'
       - 'desktop-app/src/admin-auth.js'

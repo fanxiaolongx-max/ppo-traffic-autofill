@@ -329,7 +329,16 @@ export const server = http.createServer(async (request, response) => {
       adminAuth.assertCsrf(request, context);
       const control = globalThis.__PPO_CORE_CONTROL__;
       if (!control) return json(response, 503, { error: { code: 'CORE_CONTROL_UNAVAILABLE', message: '当前运行方式不支持核心热更新' } });
-      try { return json(response, 200, await control.check()); }
+      try {
+        const result = await control.check();
+        logger.info('core_update_check_completed', {
+          activeVersion: result.activeVersion || null,
+          availableVersion: result.available?.version || null,
+          sourceIp: clientIp(request),
+          desktop: context.desktop
+        });
+        return json(response, 200, result);
+      }
       catch (error) {
         logger.warn('core_update_check_failed', { error: { message: error.message, code: error.code } });
         return json(response, 502, { error: { code: 'CORE_UPDATE_CHECK_FAILED', message: error.message } });

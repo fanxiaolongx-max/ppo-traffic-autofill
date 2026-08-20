@@ -18,8 +18,8 @@ jobs:
     name: Chrome and Edge packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Verify tag matches extension version
@@ -40,7 +40,7 @@ jobs:
           mkdir -p release-assets
           cp "dist/ppo-traffic-autofill-chrome-v${version}.zip" release-assets/
           cp "dist/ppo-traffic-autofill-edge-v${version}.zip" release-assets/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: browser-extensions
           path: release-assets/*
@@ -50,12 +50,14 @@ jobs:
   macos-app:
     name: macOS universal app
     runs-on: macos-latest
+    env:
+      SIGN_MAC_APP: ${{ secrets.MAC_CSC_LINK != '' }}
     defaults:
       run:
         working-directory: desktop-app
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -73,7 +75,13 @@ jobs:
         run: npm ci
       - name: Run desktop tests
         run: npm test
-      - name: Build universal DMG and ZIP
+      - name: Build unsigned universal DMG and ZIP
+        if: env.SIGN_MAC_APP != 'true'
+        run: npx electron-builder --mac --universal --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Build signed universal DMG and ZIP
+        if: env.SIGN_MAC_APP == 'true'
         run: npx electron-builder --mac --universal --publish never
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -91,7 +99,7 @@ jobs:
           mkdir -p release-assets
           cp "${dmg}" "release-assets/ppo-query-hub-macos-universal-v${app_version}.dmg"
           cp "${zip}" "release-assets/ppo-query-hub-macos-universal-v${app_version}.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: macos-universal
           path: desktop-app/release-assets/*
@@ -106,7 +114,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           pattern: '*'
           path: release-assets

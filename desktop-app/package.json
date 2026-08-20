@@ -1,0 +1,44 @@
+{
+  "name": "ppo-query-hub",
+  "version": "1.0.3",
+  "private": true,
+  "description": "All-in-one PPO desktop query app with mobile web UI and external API",
+  "repository": "https://github.com/fanxiaolongx-max/ppo-traffic-autofill",
+  "homepage": "https://github.com/fanxiaolongx-max/ppo-traffic-autofill/releases",
+  "main": "src/desktop-main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "dev": "PPO_LOG_LEVEL=debug electron .",
+    "test": "node --test",
+    "pack": "electron-builder --dir",
+    "build": "electron-builder"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.ppo.queryhub",
+    "productName": "埃及车辆违章查询",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "public/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "assets/icon.icns",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    }
+  }
+}

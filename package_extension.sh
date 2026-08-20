@@ -46,8 +46,10 @@ else
   echo "🚀 [版本递增] v${OLD_VERSION} -> v${NEW_VERSION}"
 fi
 
-PACKAGE_NAME="ppo-traffic-autofill-v${NEW_VERSION}.zip"
-LATEST_PACKAGE="ppo-traffic-autofill-latest.zip"
+CHROME_PACKAGE="ppo-traffic-autofill-chrome-v${NEW_VERSION}.zip"
+EDGE_PACKAGE="ppo-traffic-autofill-edge-v${NEW_VERSION}.zip"
+CHROME_LATEST="ppo-traffic-autofill-chrome-latest.zip"
+EDGE_LATEST="ppo-traffic-autofill-edge-latest.zip"
 OUTPUT_DIR="${PROJECT_DIR}/dist"
 
 echo "🔍 [1/4] 开始验证项目代码完整性与语法..."
@@ -61,11 +63,11 @@ echo "✅ 语法与 Manifest 校验全部通过！"
 
 echo "📦 [2/4] 创建输出目录..."
 mkdir -p "${OUTPUT_DIR}"
-rm -f "${OUTPUT_DIR}/${PACKAGE_NAME}"
-rm -f "${OUTPUT_DIR}/${LATEST_PACKAGE}"
+rm -f "${OUTPUT_DIR}/${CHROME_PACKAGE}" "${OUTPUT_DIR}/${EDGE_PACKAGE}"
+rm -f "${OUTPUT_DIR}/${CHROME_LATEST}" "${OUTPUT_DIR}/${EDGE_LATEST}"
 
 echo "🧹 [3/4] 正在打包生产文件 (排除开发辅助与临时文档)..."
-zip -r "${OUTPUT_DIR}/${PACKAGE_NAME}" \
+zip -r "${OUTPUT_DIR}/${CHROME_PACKAGE}" \
   manifest.json \
   _locales/ \
   icons/ \
@@ -81,12 +83,14 @@ zip -r "${OUTPUT_DIR}/${PACKAGE_NAME}" \
   utils.js \
   -x "*.DS_Store" "*__MACOSX*"
 
-# 复制一份通用 latest 包方便上传
-cp "${OUTPUT_DIR}/${PACKAGE_NAME}" "${OUTPUT_DIR}/${LATEST_PACKAGE}"
+# Chrome 与 Edge 都使用 Manifest V3；分别保留清晰的商店上传文件名。
+cp "${OUTPUT_DIR}/${CHROME_PACKAGE}" "${OUTPUT_DIR}/${EDGE_PACKAGE}"
+cp "${OUTPUT_DIR}/${CHROME_PACKAGE}" "${OUTPUT_DIR}/${CHROME_LATEST}"
+cp "${OUTPUT_DIR}/${EDGE_PACKAGE}" "${OUTPUT_DIR}/${EDGE_LATEST}"
 
 echo "🎉 [4/4] 打包成功！发布包已生成至："
-echo "   📍 对应版本包: ${OUTPUT_DIR}/${PACKAGE_NAME}"
-echo "   📍 最新发布包: ${OUTPUT_DIR}/${LATEST_PACKAGE}"
-echo "   📊 文件大小: $(du -h "${OUTPUT_DIR}/${PACKAGE_NAME}" | cut -f1)"
+echo "   📍 Chrome: ${OUTPUT_DIR}/${CHROME_PACKAGE}"
+echo "   📍 Edge:   ${OUTPUT_DIR}/${EDGE_PACKAGE}"
+echo "   📊 文件大小: $(du -h "${OUTPUT_DIR}/${CHROME_PACKAGE}" | cut -f1)"
 echo ""
 echo "👉 您可直接将上述 zip 包上传至 Chrome Web Store 开发者后台与 Microsoft Partner Center！"

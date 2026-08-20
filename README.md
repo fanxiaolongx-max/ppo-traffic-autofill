@@ -69,11 +69,31 @@
 生成文件：
 
 ```text
-dist/ppo-traffic-autofill-v1.0.3.zip
-dist/ppo-traffic-autofill-latest.zip
+dist/ppo-traffic-autofill-chrome-v1.0.3.zip
+dist/ppo-traffic-autofill-edge-v1.0.3.zip
+dist/ppo-traffic-autofill-chrome-latest.zip
+dist/ppo-traffic-autofill-edge-latest.zip
 ```
 
-两个 ZIP 内容相同，均可上传到 Chrome Web Store 或 Microsoft Edge Add-ons。正式上传前请确认商店当前已发布版本低于 `1.0.3`；如果商店已经发布过 `1.0.3`，则必须提升版本号后再提交。
+带版本号的 Chrome、Edge ZIP 分别用于两个商店；`latest` 文件方便本地反复验证。两个浏览器目前都使用同一套 Manifest V3 源码，但使用独立文件名可以避免上架时选错包。正式上传前请确认商店当前已发布版本低于 `1.0.3`；如果商店已经发布过 `1.0.3`，则必须提升版本号后再提交。
+
+## GitHub 自动构建与 Release
+
+仓库内置 `.github/workflows/build-release.yml`：
+
+- 推送到 `main` 后，自动校验并打包 Chrome ZIP、Edge ZIP，以及 macOS Universal DMG/ZIP；构建产物可在对应 GitHub Actions 任务中下载，默认保留 30 天。
+- 推送形如 `v1.0.3` 的版本标签时，在完成相同构建后自动创建或更新 GitHub Release，并附上 4 个可下载文件。
+- 标签、`manifest.json` 扩展版本与 `desktop-app/package.json` 桌面程序版本必须完全一致，否则任务会主动失败，防止发布错版本。
+- macOS 使用 Universal 架构构建，可同时覆盖 Apple Silicon 与 Intel Mac。未配置签名密钥时仍会生成安装包，但正式分发建议按 `desktop-app/README.md` 配置签名和公证密钥。
+
+发布示例：
+
+```bash
+git tag v1.0.3
+git push origin v1.0.3
+```
+
+本地 `dist/*.zip` 和 `desktop-app/dist/` 已加入 `.gitignore`，无需再把打包文件提交到仓库。
 
 ## 项目结构
 
@@ -89,6 +109,8 @@ icons/                 扩展图标
 PRIVACY.md             隐私政策
 STORE_LISTING.md       商店上架文案
 package_extension.sh   校验与打包脚本
+.github/workflows/     GitHub Actions 自动构建与 Release
+desktop-app/           桌面 GUI、Web/API 服务与 Admin 管理后台
 ```
 
 ## 权限说明

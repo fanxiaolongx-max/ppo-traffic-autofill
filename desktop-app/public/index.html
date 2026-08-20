@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>埃及车辆违章查询</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/preferences.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <p class="eyebrow">PPO QUERY HUB</p>
+      <div class="brand-line">
+        <h1>埃及车辆违章查询</h1>
+        <div id="access-meta" class="access-meta" aria-live="polite">
+          <i aria-hidden="true">↗</i>
+          <span>
+            <strong id="access-address">正在识别访问地址</strong>
+            <small id="access-port">端口 —</small>
+          </span>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="admin-button" class="developer-button hidden" type="button">Admin</button>
+      <button id="feedback-button" class="developer-button" type="button">建议反馈</button>
+      <button id="service-badge" class="service-badge" type="button" aria-label="查看服务状态"><i></i><span>连接中</span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="overview card">
+      <div><span>正在查询</span><strong id="running-count">0</strong></div>
+      <div><span>等待队列</span><strong id="queued-count">0</strong></div>
+      <div><span>最近成功</span><strong id="success-count">0</strong></div>
+    </section>
+
+    <section id="active-card" class="active-card card hidden" aria-live="polite">
+      <div class="row"><strong id="active-title">正在查询</strong><span id="active-percent">0%</span></div>
+      <div class="progress"><i id="active-progress"></i></div>
+      <p id="active-step">等待开始</p>
+    </section>
+
+    <section id="queue-notice" class="queue-notice hidden" role="status" aria-live="polite"></section>
+
+    <section class="card query-card">
+      <div class="section-title">
+        <div><p class="eyebrow">NEW QUERY</p><h2>发起查询</h2></div>
+        <select id="saved-profile" aria-label="最近填写记录"><option value="">最近填写</option></select>
+      </div>
+
+      <form id="query-form" autocomplete="on">
+        <fieldset>
+          <legend>车牌信息</legend>
+          <label>车牌数字与阿拉伯字母</label>
+          <div class="plate-row" dir="rtl">
+            <button class="letter-slot active" type="button" data-letter-slot="letter1" aria-label="选择第一个阿拉伯字母"><strong id="letter1-display">字1</strong><small>第一位</small></button>
+            <button class="letter-slot" type="button" data-letter-slot="letter2" aria-label="选择第二个阿拉伯字母"><strong id="letter2-display">字2</strong><small>第二位</small></button>
+            <button class="letter-slot" type="button" data-letter-slot="letter3" aria-label="选择第三个阿拉伯字母"><strong id="letter3-display">字3</strong><small>第三位</small></button>
+            <input id="letter1" type="hidden" required>
+            <input id="letter2" type="hidden">
+            <input id="letter3" type="hidden">
+            <div class="plate-number-field" dir="ltr">
+              <input id="plate-number" maxlength="8" inputmode="numeric" pattern="[0-9]+" autocomplete="off" placeholder="例如 1234" aria-label="车牌数字，仅限0到9" required>
+              <small>车牌数字（仅限 0–9）</small>
+            </div>
+          </div>
+          <div class="letter-picker-head">
+            <div><strong>快捷选择字母</strong><small>先选择上方字母位置，再点击字母</small></div>
+            <div id="letter-preview" class="letter-preview" aria-live="polite"><span>أ</span><small>放大预览</small></div>
+          </div>
+          <div id="letter-palette" class="letter-palette" dir="rtl" aria-label="埃及车牌常用阿拉伯字母"></div>
+          <button id="clear-letters" class="clear-letters" type="button">清空字母</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>所有人信息</legend>
+          <div class="segmented">
+            <label><input type="radio" name="owner-type" value="passport" checked><span>护照</span></label>
+            <label><input type="radio" name="owner-type" value="national_id"><span>埃及身份证</span></label>
+          </div>
+          <label for="document-number">证件号码</label>
+          <div class="secret-input">
+            <input id="document-number" type="password" maxlength="9" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="document-hint" placeholder="请输入完整证件号码" required>
+            <button id="toggle-document" type="button" aria-label="显示或隐藏证件号码">显示</button>
+          </div>
+          <small id="document-hint" class="validation-hint" aria-live="polite"></small>
+          <div id="country-field">
+            <label for="country-select">护照签发国家</label>
+            <select id="country-select" aria-label="护照签发国家">
+              <option value="10206" selected>🇨🇳 中国</option>
+            </select>
+          </div>
+          <label class="remember"><input id="remember-full" type="checkbox"><span>在这台设备记住完整证件号码</span></label>
+        </fieldset>
+
+        <div id="form-message" class="message hidden" role="alert"></div>
+        <button id="submit-button" class="primary" type="submit"><span>提交查询</span><b>→</b></button>
+        <p class="privacy-note">提交即表示同意将填写信息发送至 PPO 官网完成查询。公共设备请勿勾选记住证件号码。</p>
+      </form>
+    </section>
+
+    <section class="card history-card">
+      <div class="section-title">
+        <div><p class="eyebrow">TRACEABLE HISTORY</p><h2>历史队列</h2></div>
+        <div class="section-title-actions"><button id="refresh-history" class="ghost" type="button">刷新</button></div>
+      </div>
+      <div class="legend"><span><i class="success"></i>成功</span><span><i class="pending"></i>处理中</span><span><i class="failed"></i>失败</span><span><i class="cancelled"></i>中断</span></div>
+      <div id="history-grid" class="history-grid" aria-label="历史查询状态"></div>
+      <div id="history-list" class="history-list"></div>
+      <button id="load-more-history" class="load-more hidden" type="button">加载更多记录</button>
+    </section>
+  </main>
+
+  <dialog id="detail-dialog">
+    <div class="dialog-head"><div><p class="eyebrow">QUERY TRACE</p><h2>查询详情</h2></div><button id="close-dialog" type="button">×</button></div>
+    <div id="detail-content"></div>
+  </dialog>
+  <dialog id="status-dialog" class="status-dialog">
+    <div class="dialog-head">
+      <div><p class="eyebrow">SERVICE STATUS</p><h2>服务运行状态</h2></div>
+      <div class="dialog-actions"><button id="refresh-status" type="button" aria-label="刷新服务状态">↻</button><button id="close-status-dialog" type="button" aria-label="关闭服务状态">×</button></div>
+    </div>
+    <div id="status-content"></div>
+  </dialog>
+  <dialog id="feedback-dialog" class="feedback-dialog">
+    <div class="dialog-head"><div><p class="eyebrow">FEEDBACK</p><h2>建议与意见反馈</h2></div><button id="close-feedback-dialog" type="button" aria-label="关闭反馈窗口">×</button></div>
+    <form id="feedback-form">
+      <div class="feedback-contacts">
+        <label>手机号（选填）<input id="feedback-phone" type="tel" maxlength="40" autocomplete="tel" placeholder="方便需要时联系您"></label>
+        <label>微信号（选填）<input id="feedback-wechat" maxlength="64" autocomplete="off" placeholder="手机号和微信号可都不填"></label>
+      </div>
+      <label>反馈内容（必填）<textarea id="feedback-content" minlength="2" maxlength="2000" required placeholder="请描述遇到的问题、建议或希望增加的功能"></textarea></label>
+      <div class="feedback-form-foot"><small id="feedback-count">0 / 2000</small><button id="feedback-submit" class="primary" type="submit">提交反馈</button></div>
+      <p id="feedback-message" class="message hidden" role="alert"></p>
+      <p class="privacy-note">为便于排查，服务端会一并记录本次访问的设备标识、IP、浏览器信息和粗略 IP 归属地。</p>
+    </form>
+  </dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

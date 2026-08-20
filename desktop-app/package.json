@@ -1,6 +1,6 @@
 {
   "name": "ppo-query-hub",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "All-in-one PPO desktop query app with mobile web UI and external API",
   "repository": "https://github.com/fanxiaolongx-max/ppo-traffic-autofill",
@@ -35,10 +35,16 @@
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "assets/icon.icns",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     }
   }
 }

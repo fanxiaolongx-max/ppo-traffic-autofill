@@ -41,6 +41,8 @@ export const config = Object.freeze({
   estimatedTaskMs: integer('PPO_ESTIMATED_TASK_MS', 60_000, 5_000),
   maxEventClients: integer('PPO_MAX_EVENT_CLIENTS', 100, 1),
   maxEventClientsPerIp: integer('PPO_MAX_EVENT_CLIENTS_PER_IP', 5, 1),
+  eventClientMinAgeMs: integer('PPO_EVENT_CLIENT_MIN_AGE_MS', 600_000, 60_000),
+  eventClientMaxAgeMs: integer('PPO_EVENT_CLIENT_MAX_AGE_MS', 900_000, 60_000),
   ipSubmissionPerMinute: integer('PPO_IP_SUBMISSIONS_PER_MINUTE', 10, 1),
   ipPerMinute: integer('PPO_IP_PER_MINUTE', 2, 1),
   ipPerDay: integer('PPO_IP_PER_DAY', 30, 1),

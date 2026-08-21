@@ -114,3 +114,9 @@ export function summarizeEventStreams(clients, { maxEventClients, maxEventClient
     }))
   };
 }
+
+export function eventStreamLifetime({ eventClientMinAgeMs, eventClientMaxAgeMs }, random = Math.random) {
+  const minimum = Math.max(60_000, Number(eventClientMinAgeMs) || 600_000);
+  const maximum = Math.max(minimum, Number(eventClientMaxAgeMs) || 900_000);
+  return minimum + Math.floor(Math.min(1, Math.max(0, random())) * (maximum - minimum));
+}

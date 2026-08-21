@@ -438,9 +438,31 @@ document.querySelectorAll('[name="owner-type"]').forEach(input => input.addEvent
   updateDocumentHint();
 }));
 
-const events = new EventSource(`/api/v1/events?deviceId=${encodeURIComponent(deviceId())}`);
-events.onmessage = event => {
+const eventStreamId = sessionStorage.getItem('ppo-event-stream-id') || (crypto.randomUUID?.() || `stream-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+sessionStorage.setItem('ppo-event-stream-id', eventStreamId);
+let events = null;
+let eventReconnectTimer = null;
+let eventHiddenTimer = null;
+
+function disconnectEvents() {
+  clearTimeout(eventReconnectTimer); eventReconnectTimer = null;
+  if (events) events.close();
+  events = null;
+}
+
+function scheduleEventReconnect(delay = 500) {
+  clearTimeout(eventReconnectTimer);
+  if (document.hidden) return;
+  eventReconnectTimer = setTimeout(() => { eventReconnectTimer = null; connectEvents(); }, delay);
+}
+
+function handleEventMessage(event) {
   const data = JSON.parse(event.data);
+  if (data.type === 'stream_reset') {
+    disconnectEvents();
+    scheduleEventReconnect(Number(data.retryAfterMs) || 500);
+    return;
+  }
   if (data.queue) state.queue = data.queue;
   if (data.query) {
     const index = state.history.findIndex(item => item.id === data.query.id);
@@ -458,9 +480,25 @@ events.onmessage = event => {
     }
   }
   render();
-};
-events.onerror = () => { $('#service-badge').className = 'service-badge offline'; $('#service-badge span').textContent = t('正在重连'); };
-events.onopen = () => { if (state.status) renderServiceBadge(state.status); };
+}
+
+function connectEvents() {
+  if (document.hidden || events) return;
+  const source = new EventSource(`/api/v1/events?deviceId=${encodeURIComponent(deviceId())}&streamId=${encodeURIComponent(eventStreamId)}`);
+  events = source;
+  source.onmessage = event => { if (events === source) handleEventMessage(event); };
+  source.onerror = () => { if (events === source) { $('#service-badge').className = 'service-badge offline'; $('#service-badge span').textContent = t('正在重连'); } };
+  source.onopen = () => { if (events === source && state.status) renderServiceBadge(state.status); };
+}
+
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(eventHiddenTimer);
+  if (document.hidden) eventHiddenTimer = setTimeout(disconnectEvents, 60_000);
+  else connectEvents();
+});
+window.addEventListener('pagehide', disconnectEvents);
+window.addEventListener('pageshow', connectEvents);
 initializePreferences($('.topbar-actions'));
 window.addEventListener('ppo:languagechange', () => { renderAccessMeta(); renderLetterSlots(); updateProfiles(); updateDocumentHint(); if(state.status){renderServiceBadge(state.status);renderStatus(state.status);} render(); applyTranslations(); });
 initializePlatePicker(); updateProfiles(); updateDocumentHint(); initializeAdminEntry(); refresh();
+connectEvents();

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { config } from './config.js';
 import { Store } from './db.js';
 import { AuditLogger } from './logger.js';
-import { RateLimiter, summarizeEventStreams } from './rate-limit.js';
+import { RateLimiter, eventStreamLifetime, summarizeEventStreams } from './rate-limit.js';
 import { PPOQueryDriver } from './query-driver.js';
 import { QueryQueue, publicEvent, publicRecord } from './queue.js';
 import { parseOfficialSummary } from './result-parser.js';
@@ -61,7 +61,19 @@ if (repairedResultCount) logger.info('stored_results_reparsed', { repairedCount:
 
 queue = new QueryQueue({ store, driver, config, logger, broadcast });
 const heartbeatTimer = setInterval(() => {
-  for (const client of clients) sendEvent(client, ': keep-alive\n\n');
+  const now = Date.now();
+  for (const client of clients) {
+    if (now >= client.expiresAt) {
+      clients.delete(client);
+      try {
+        client.response.write(`data: ${JSON.stringify({ type: 'stream_reset', retryAfterMs: 250 + Math.floor(Math.random() * 750) })}\n\n`);
+        client.response.end();
+      } catch {}
+      logger.info('event_stream_recycled', { sourceIp: client.ip, deviceId: client.deviceId, streamId: client.streamId, connectedMs: now - client.connectedAt });
+      continue;
+    }
+    sendEvent(client, ': keep-alive\n\n');
+  }
 }, 25_000);
 heartbeatTimer.unref();
 const publicDir = path.join(config.appRoot, 'public');
@@ -444,6 +456,14 @@ export const server = http.createServer(async (request, response) => {
       const privileged = isPrivileged(request);
       const deviceId = deviceIdentity(request, url, { privileged });
       const ip = clientIp(request);
+      const suppliedStreamId = String(url.searchParams.get('streamId') || '').trim().slice(0, 128);
+      const streamId = /^[A-Za-z0-9._:-]{8,128}$/.test(suppliedStreamId) ? suppliedStreamId : `legacy:${crypto.randomUUID()}`;
+      const replaced = [...clients].filter(client => client.deviceId === deviceId && client.streamId === streamId);
+      for (const client of replaced) {
+        clients.delete(client);
+        try { client.response.end(); } catch {}
+      }
+      if (replaced.length) logger.info('event_stream_replaced', { sourceIp: ip, deviceId, streamId, replacedCount: replaced.length });
       const sameIpClients = [...clients].filter(client => client.ip === ip).length;
       if (clients.size >= config.maxEventClients || sameIpClients >= config.maxEventClientsPerIp) {
         logger.warn('event_stream_rejected', { sourceIp: ip, currentEventClients: clients.size, currentEventClientsForIp: sameIpClients, maxEventClients: config.maxEventClients, maxEventClientsPerIp: config.maxEventClientsPerIp });
@@ -453,9 +473,13 @@ export const server = http.createServer(async (request, response) => {
       response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       response.write(`data: ${JSON.stringify({ type: 'snapshot', queue: queue.publicSnapshot(deviceId) })}\n\n`);
       const connectedAt = Date.now();
-      const client = { response, deviceId, ip, connectedAt, lastActivityAt: connectedAt };
+      const client = { response, deviceId, streamId, ip, connectedAt, lastActivityAt: connectedAt, expiresAt: connectedAt + eventStreamLifetime(config) };
       clients.add(client);
-      request.on('close', () => clients.delete(client));
+      const cleanup = () => clients.delete(client);
+      request.on('aborted', cleanup);
+      request.on('close', cleanup);
+      response.on('close', cleanup);
+      response.on('error', cleanup);
       return;
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/queue') {

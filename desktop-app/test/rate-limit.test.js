@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RateLimiter, summarizeEventStreams } from '../src/rate-limit.js';
+import { RateLimiter, eventStreamLifetime, summarizeEventStreams } from '../src/rate-limit.js';
 
 test('limits anonymous clients and exempts valid privileged requests', () => {
   const limiter = new RateLimiter({ ipPerMinute: 2, ipPerDay: 30, deviceCooldownMs: 0, ipSubmissionPerMinute: 10 });
@@ -60,4 +60,12 @@ test('summarizes live event streams by IP and device without losing duplicate co
   assert.deepEqual(summary.byIp[0].devices, [{ deviceId:'device-a', count:2 }]);
   assert.equal(summary.byIp[0].oldestConnectedAt, '2026-08-20T19:59:00.000Z');
   assert.equal(summary.byIp[0].lastActivityAt, '2026-08-20T19:59:58.000Z');
+});
+
+test('bounds event stream lifetime between the configured minimum and maximum', () => {
+  const config = { eventClientMinAgeMs:600_000, eventClientMaxAgeMs:900_000 };
+  assert.equal(eventStreamLifetime(config, () => 0), 600_000);
+  assert.equal(eventStreamLifetime(config, () => 0.5), 750_000);
+  assert.ok(eventStreamLifetime(config, () => 1) < 900_001);
+  assert.equal(eventStreamLifetime({ eventClientMinAgeMs:900_000, eventClientMaxAgeMs:600_000 }, () => 0.5), 900_000);
 });

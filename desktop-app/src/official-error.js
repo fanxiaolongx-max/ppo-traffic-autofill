@@ -6,8 +6,14 @@ const RULES = [
     infrastructure: false
   },
   {
+    code: 'OFFICIAL_AUTH_ERROR',
+    pattern: /اسم المستخدم أو كلمة السر غير صحيحة|اسم المستخدم[^\n]{0,120}كلمة السر/,
+    message: 'PPO 官网内部查询会话认证异常，填写内容不一定有误，请稍后再试',
+    infrastructure: true
+  },
+  {
     code: 'IDENTITY_MISMATCH',
-    pattern: /رقم الرخصة غير صحيح|الرقم القومي أو رقم الرخصة|غير صحيح|يرجى التحقق|رقم الرخصة/,
+    pattern: /رقم الرخصة غير صحيح|الرقم القومي أو رقم الرخصة|يرجى التحقق[^\n]{0,160}(?:رقم|الرخصة)|رقم الرخصة/,
     message: '车牌号或证件号不匹配，请核对车牌字母、数字、证件类型及签发国家',
     infrastructure: false
   },
@@ -65,7 +71,7 @@ export function classifyOfficialError(text) {
 
 export function isInfrastructureError(code) {
   return new Set([
-    'QUERY_TIMEOUT', 'SESSION_EXPIRED', 'OFFICIAL_PROCESSING_ERROR',
+    'QUERY_TIMEOUT', 'SESSION_EXPIRED', 'OFFICIAL_AUTH_ERROR', 'OFFICIAL_PROCESSING_ERROR',
     'OFFICIAL_MAINTENANCE', 'OFFICIAL_GATEWAY_ERROR',
     'OFFICIAL_UNAVAILABLE', 'OFFICIAL_ERROR', 'BROWSER_NOT_FOUND', 'FORM_CHANGED',
     'FORM_NOT_READY', 'QUERY_FAILED'

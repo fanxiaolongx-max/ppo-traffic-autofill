@@ -148,6 +148,55 @@ function adminSummaryRecord(record) {
   return value;
 }
 
+const DIAGNOSTIC_FILE_FIELDS = {
+  before: { field: 'preSubmitScreenshotPath', mime: 'image/png', extension: '.png', name: 'before-submit.png' },
+  after: { field: 'screenshotPath', mime: 'image/png', extension: '.png', name: 'after-failure.png' },
+  snapshot: { field: 'snapshotPath', mime: 'application/json; charset=utf-8', extension: '.json', name: 'diagnostic-snapshot.json' }
+};
+
+function diagnosticFile(record, kind) {
+  const descriptor = DIAGNOSTIC_FILE_FIELDS[kind];
+  const candidate = descriptor && record?.error?.diagnostic?.[descriptor.field];
+  if (!candidate || path.extname(candidate).toLowerCase() !== descriptor.extension) return null;
+  const root = path.resolve(config.dataDir, 'diagnostics');
+  const resolved = path.resolve(candidate);
+  if (!resolved.startsWith(`${root}${path.sep}`) || !fs.existsSync(resolved)) return null;
+  try {
+    const realRoot = fs.realpathSync(root);
+    const realFile = fs.realpathSync(resolved);
+    if (!realFile.startsWith(`${realRoot}${path.sep}`)) return null;
+    return { ...descriptor, path: realFile };
+  } catch {
+    return null;
+  }
+}
+
+function adminDetailRecord(record) {
+  const value = adminSummaryRecord(record);
+  const sourceDiagnostic = record?.error?.diagnostic;
+  if (record?.error && sourceDiagnostic) {
+    value.error = {
+      ...value.error,
+      diagnostic: {
+        reason: sourceDiagnostic.reason || null,
+        url: sourceDiagnostic.url || null,
+        title: sourceDiagnostic.title || null,
+        userAgent: sourceDiagnostic.userAgent || null,
+        readyState: sourceDiagnostic.readyState || null,
+        bodyLength: sourceDiagnostic.bodyLength || 0,
+        dialogCount: sourceDiagnostic.dialogCount || 0,
+        submitState: sourceDiagnostic.submitState || null
+      }
+    };
+  }
+  value.diagnostics = {
+    before: Boolean(diagnosticFile(record, 'before')),
+    after: Boolean(diagnosticFile(record, 'after')),
+    snapshot: Boolean(diagnosticFile(record, 'snapshot'))
+  };
+  return value;
+}
+
 function json(response, status, body, headers = {}) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
   response.end(JSON.stringify(body));
@@ -400,7 +449,23 @@ export const server = http.createServer(async (request, response) => {
     if (request.method === 'GET' && adminDetail) {
       requireAdmin(request);
       const record = store.getQuery(adminDetail[1]);
-      return record ? json(response, 200, { ...record, events: store.listEvents(record.id) }) : json(response, 404, { error: { code: 'NOT_FOUND', message: '查询任务不存在' } });
+      return record ? json(response, 200, { ...adminDetailRecord(record), events: store.listEvents(record.id) }) : json(response, 404, { error: { code: 'NOT_FOUND', message: '查询任务不存在' } });
+    }
+    const adminDiagnostic = url.pathname.match(/^\/api\/v1\/admin\/queries\/([^/]+)\/diagnostics\/(before|after|snapshot)$/);
+    if (request.method === 'GET' && adminDiagnostic) {
+      requireAdmin(request);
+      const record = store.getQuery(adminDiagnostic[1]);
+      const file = record && diagnosticFile(record, adminDiagnostic[2]);
+      if (!file) return json(response, 404, { error: { code: 'NOT_FOUND', message: '该查询没有可用的诊断文件' } });
+      response.writeHead(200, {
+        'content-type': file.mime,
+        'content-length': String(fs.statSync(file.path).size),
+        'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+        'cache-control': 'private, no-store',
+        'x-content-type-options': 'nosniff'
+      });
+      fs.createReadStream(file.path).pipe(response);
+      return;
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/feedback') {
       requireAdmin(request);

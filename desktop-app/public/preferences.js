@@ -21,7 +21,7 @@ const EN = {
   '设置远程管理员密码':'Set remote admin password','当前密码':'Current password','新密码（至少 9 位）':'New password (9+ characters)','确认新密码':'Confirm new password','保存并使旧会话失效':'Save and invalidate old sessions','单条日志原文':'Raw log entry',
   '运行正常':'Operational','服务波动':'Degraded','服务中断':'Outage','已停止':'Stopped','等待检测':'Pending check','本程序服务':'Application service','PPO 官网':'PPO website','24 小时查询成功率':'24-hour success rate','当前队列':'Current queue','24 小时流控':'24-hour rate limits','最近状态记录':'Recent status history','加载更多状态记录':'Load more status records','正常接收查询':'Accepting queries','暂时停止接收':'Temporarily paused',
   '本机':'Local','局域网':'LAN','待定位':'Locating','定位暂不可用':'Location unavailable','未知':'Unknown','需要登录':'Sign-in required','已连接':'Connected',
-  '查看处理':'Review','管理员备注':'Admin note','处理状态':'Status','保存处理结果':'Save changes','已保存':'Saved','任务 / 追踪编号':'Task / trace ID','车牌 / 完整证件':'Plate / full document','来源 / IP':'Source / IP','IP 归属信息':'IP location','设备标识':'Device ID','创建 / 完成':'Created / completed','结果':'Result','官网原始提示':'Official message',
+  '查看处理':'Review','管理员备注':'Admin note','处理状态':'Status','保存处理结果':'Save changes','已保存':'Saved','任务 / 追踪编号':'Task / trace ID','车牌 / 完整证件':'Plate / full document','来源 / IP':'Source / IP','IP 归属信息':'IP location','设备标识':'Device ID','创建 / 完成':'Created / completed','结果':'Result','官网原始提示':'Official message','提交现场':'Submitted form state','失败诊断文件':'Failure diagnostics','仅管理员可访问，包含失败前后的官网现场。':'Admin only. Contains the PPO page before submission and after failure.','提交前截图':'Before-submit screenshot','失败现场截图':'Failure screenshot','诊断快照 JSON':'Diagnostic snapshot JSON',
   '来源 IP':'Source IP','手机号':'Phone','微信号':'WeChat ID','页面':'Page','反馈编号':'Feedback ID','提交时间':'Submitted','时区':'Time zone','来源':'Source','创建时间':'Created','总罚款':'Total fine','违章笔数':'Violations','查询尝试':'Query attempts','失败原因':'Failure reason','官网提示':'Official message'
   ,'请从第一位开始，依次选择 2～3 个车牌阿拉伯字母。':'Select 2–3 Arabic plate letters in order, starting from the first position.','车牌数字只能输入 0–9，长度为 1～8 位。':'Plate digits must contain 1–8 characters from 0–9.','埃及身份证号必须是 14 位纯数字。':'The Egyptian National ID must contain exactly 14 digits.','护照号只能包含英文字母和数字，长度应为 3～32 位。':'The passport number must contain 3–32 English letters or digits.','中国护照号码格式不正确，请检查字母和位数。':'The Chinese passport number format is invalid. Check the letters and length.','已找到相同任务，正在显示原查询进度。':'A matching task already exists. Showing its current progress.','提交成功，任务已进入查询队列。':'Submitted successfully and added to the queue.','感谢反馈，我们已收到。':'Thank you. Your feedback has been received.','正在加载…':'Loading…','连接失败':'Connection failed','正在重连':'Reconnecting','状态待确认':'Status pending','官网故障':'PPO unavailable','官网波动':'PPO degraded','服务正常':'Operational',
   '最近没有足够新的官网查询样本':'No recent PPO query samples','连续异常，当前处于保护性暂停状态':'Repeated failures; queries are temporarily paused','查询服务已启动':'Query service started','暂无状态变化记录':'No status changes recorded',
@@ -40,14 +40,14 @@ const ERROR_EN = {
   DEVICE_ID_REQUIRED:'A valid device ID is missing. Refresh the page and try again.', RATE_SUBMISSIONS:'Too many submissions. Please try again shortly.', RATE_MINUTE:'Too many queries. Please wait a minute.', RATE_DAY:'The daily query limit has been reached.', DEVICE_COOLDOWN:'Please wait before submitting another query.',
   INVALID_PLATE_LETTERS:'Select 2–3 valid Arabic plate letters.', INVALID_PLATE_NUMBER:'Plate digits may only contain 0–9.', INVALID_OWNER_TYPE:'Invalid document type.', INVALID_NATIONAL_ID:'The Egyptian National ID must contain exactly 14 digits.', INVALID_PASSPORT:'The passport number must contain 3–32 English letters or digits.', INVALID_CHINA_PASSPORT:'The Chinese passport number format is invalid. Check the letters and length.', UNSUPPORTED_COUNTRY:'This version currently supports passports issued by China only.',
   QUEUE_FULL:'The query queue is full. Please try again later.', CIRCUIT_OPEN:'The PPO website is repeatedly failing. Queries are temporarily paused.', CORE_MAINTENANCE:'The service is switching query cores. Please try again shortly.', QUEUE_EXPIRED:'The task waited too long and was safely stopped. Please submit it again.', QUERY_TIMEOUT:'The official website did not respond in time. Please try again later.',
-  LICENSE_DATA_UPDATE_REQUIRED:'No recent data is registered for this vehicle license. Please contact the relevant traffic prosecution office to update the record.',
+  LICENSE_DATA_UPDATE_REQUIRED:'No recent data is registered for this vehicle license. Please contact the relevant traffic prosecution office to update the record.', OFFICIAL_AUTH_ERROR:'The PPO internal query session could not be authenticated. Your submitted details may still be correct. Please try again later.',
   FEEDBACK_RATE_HOUR:'Too many feedback submissions. Please try again later.', FEEDBACK_RATE_DAY:'The daily feedback limit has been reached.', INVALID_FEEDBACK_CONTENT:'Feedback must contain 2–2000 characters.', INVALID_FEEDBACK_PHONE:'The phone number format is invalid.', FEEDBACK_ATTACHMENT_COUNT:'You can upload up to 3 attachments.', FEEDBACK_ATTACHMENT_TYPE:'Only PNG, JPEG, WebP, PDF, TXT, and LOG files are supported.', FEEDBACK_ATTACHMENT_DATA:'The attachment is invalid or too large.', FEEDBACK_ATTACHMENT_SIZE:'Each attachment must be 5 MB or smaller.', FEEDBACK_ATTACHMENT_SIGNATURE:'The attachment extension, type, or contents do not match.', FEEDBACK_ATTACHMENTS_TOTAL_SIZE:'Attachments must not exceed 10 MB in total.',
   ADMIN_LOGIN_FAILED:'Incorrect admin password.', ADMIN_LOGIN_LIMIT:'Too many sign-in attempts. Please try again later.', ADMIN_AUTH_REQUIRED:'Sign in to Admin first.', CURRENT_PASSWORD_INVALID:'The current admin password is incorrect.', INVALID_ADMIN_PASSWORD:'The admin password must contain 9–128 characters.', CSRF_INVALID:'Security validation failed. Refresh Admin and try again.'
 };
 const TIMELINE_STEP_EN = {
   '等待执行':'Waiting to run', '正在启动浏览器':'Starting browser', '正在打开 PPO 官网':'Opening the PPO website',
   '正在初始化官网表单':'Initializing the PPO form', '正在填写查询信息':'Filling query details', '正在提交查询':'Submitting query',
-  '等待官方结果':'Waiting for the PPO result', '正在切换护照格式重试':'Retrying with an alternate passport format',
+  '等待官方结果':'Waiting for the PPO result', '正在切换护照格式重试':'Retrying with an alternate passport format', '正在重建 PPO 官网会话':'Rebuilding the PPO website session',
   '正在解析查询结果':'Parsing the query result', '查询完成':'Query completed', '查询失败':'Query failed',
   '排队超时，任务已终止':'Queue wait expired; task stopped', '已取消':'Cancelled', '程序重启，任务中断':'Interrupted by an application restart'
 };
@@ -67,10 +67,12 @@ export function localizeTimelineDetail(value) {
   const detail = String(value || '');
   if (language !== 'en') return detail;
   if (TIMELINE_DETAIL_EN[detail]) return TIMELINE_DETAIL_EN[detail];
+  if (detail.includes('检测到 PPO 官网内部会话异常')) return 'The PPO internal session failed. Rebuilding the isolated website session and retrying once.';
   let match = detail.match(/^护照格式切换，第\s*(\d+)\/(\d+)\s*次尝试$/);
   if (match) return `Switching passport format for attempt ${match[1]}/${match[2]}`;
   match = detail.match(/^第\s*(\d+)\/(\d+)\s*次：已去除护照英文字母前缀后重试$/);
   if (match) return `Attempt ${match[1]}/${match[2]}: retrying without the passport letter prefix`;
+  if (detail.includes('已去除护照英文字母前缀')) return 'Retrying without the passport letter prefix. The total attempt count is strictly bounded.';
   return detail;
 }
 export function t(key, variables={}) {

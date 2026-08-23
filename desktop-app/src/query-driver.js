@@ -16,6 +16,14 @@ function cleanPassport(value) {
   return String(value || '').replace(/^[A-Za-z]+/, '');
 }
 
+export function chromeCompatibleUserAgent(value) {
+  return String(value || '')
+    .replace(/\sElectron\/[\d.]+/gi, '')
+    .replace(/\s(?:ppo-query-hub|埃及车辆违章查询)\/[\d.]+/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function fillOfficialForm(data) {
   const fire = element => ['input', 'change', 'blur'].forEach(type => element.dispatchEvent(new Event(type, { bubbles: true })));
   const setField = (id, value) => {
@@ -50,6 +58,21 @@ function fillOfficialForm(data) {
         .forEach(label => { try { label.click(); } catch {} });
     }
   };
+  const setSelect = (id, value) => {
+    const element = document.getElementById(id);
+    if (!element) return false;
+    element.value = value;
+    fire(element);
+    try { window.apex?.item?.(id)?.setValue(value); } catch {}
+    return true;
+  };
+  const setDynamicField = (id, value) => {
+    const element = document.getElementById(id);
+    if (!element) return false;
+    element.value = value;
+    fire(element);
+    return true;
+  };
   setRadio('P14_CHOSE_OPTION', '1');
   setField('P14_LETER_1', data.letter1);
   setField('P14_LETER_2', data.letter2 || '');
@@ -57,18 +80,16 @@ function fillOfficialForm(data) {
   setField('P14_NUMBER_WITH_LETTER', data.plateNumber);
   if (data.ownerType === 'national_id') {
     setRadio('P14_ID_TYPE_NUMS_LETTERS', '2153');
-    setTimeout(() => setField('P14_NATIONAL_ID_NUMS_LETTERS', data.documentNumber), 250);
+    setDynamicField('P14_NATIONAL_ID_NUMS_LETTERS', data.documentNumber);
+    setTimeout(() => setDynamicField('P14_NATIONAL_ID_NUMS_LETTERS', data.documentNumber), 250);
   } else {
     setRadio('P14_ID_TYPE_NUMS_LETTERS', '1429');
     setRadio('P14_ISFOREIGN__NUMS_LETTERS', data.foreignType === 'citizen' ? '0' : '1');
+    setSelect('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS', data.country);
+    setDynamicField('P14_PASSPORT_NUM_NUMS_LETTERS', data.effectiveDocument);
     setTimeout(() => {
-      setField('P14_PASSPORT_NUM_NUMS_LETTERS', data.effectiveDocument);
-      const country = document.getElementById('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS');
-      if (country) {
-        country.value = data.country;
-        fire(country);
-        if (window.apex?.item) window.apex.item('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS').setValue(data.country);
-      }
+      setDynamicField('P14_PASSPORT_NUM_NUMS_LETTERS', data.effectiveDocument);
+      setSelect('P14_PASSPORT_ISSUE_PLACE_NUMS_LETTERS', data.country);
     }, 250);
   }
 
@@ -149,12 +170,12 @@ function inspectOfficialPage() {
   const dialogs = [...document.querySelectorAll('.ui-dialog, .t-Alert, .a-Alert, div[role="dialog"]')]
     .map(element => element.innerText || '')
     .filter(Boolean);
-  const dialog = dialogs.find(text => /خطأ|غير صحيح|يرجى التحقق|انتهت جلستك|انتهت الجلسة|الخدمة غير متاحة|صيانة|غير متوفرة/.test(text));
+  const dialog = dialogs.find(text => /خطأ|غير صحيح|يرجى التحقق|اسم المستخدم|كلمة السر|انتهت جلستك|انتهت الجلسة|الخدمة غير متاحة|صيانة|غير متوفرة/.test(text));
   if (dialog) return { kind: 'error', text: dialog.slice(0, 1500), url: location.href, title: document.title };
   if (location.href.includes('traffic-fines-summary') || location.href.includes('traffic?clear=201')) {
     return { kind: 'result', body: body.slice(0, 30_000), url: location.href, title: document.title };
   }
-  const pageError = body.match(/لا توجد? لهذه الرخصة بيانات مسجلة حديثة[^\n]*|التوجه (?:الى|إلى) نيابة المرور المختصة لتحديث البيانات[^\n]*|الرقم القومي أو رقم الرخصة غير صحيح[^\n]*|رقم الرخصة غير صحيح[^\n]*|يرجى التحقق[^\n]*|انتهت جلستك[^\n]*|انتهت الجلسة[^\n]*|حدث خطأ أثناء معالجة الطلب[^\n]*|حدث خطأ أثناء تنفيذ الخدمة[^\n]*|الخدمة غير متاحة[^\n]*|502\s+bad gateway[^\n]*|503\s+service[^\n]*|504\s+gateway[^\n]*|gateway timeout[^\n]*/i);
+  const pageError = body.match(/لا توجد? لهذه الرخصة بيانات مسجلة حديثة[^\n]*|التوجه (?:الى|إلى) نيابة المرور المختصة لتحديث البيانات[^\n]*|الرقم القومي أو رقم الرخصة غير صحيح[^\n]*|رقم الرخصة غير صحيح[^\n]*|يرجى التحقق[^\n]*|اسم المستخدم أو كلمة السر غير صحيحة[^\n]*|انتهت جلستك[^\n]*|انتهت الجلسة[^\n]*|حدث خطأ أثناء معالجة الطلب[^\n]*|حدث خطأ أثناء تنفيذ الخدمة[^\n]*|الخدمة غير متاحة[^\n]*|502\s+bad gateway[^\n]*|503\s+service[^\n]*|504\s+gateway[^\n]*|gateway timeout[^\n]*/i);
   if (pageError) return { kind: 'error', text: pageError[0].slice(0, 1500), url: location.href, title: document.title };
   return { kind: 'waiting', url: location.href, title: document.title, bodyLength: body.length, readyState: document.readyState };
 }
@@ -166,6 +187,7 @@ function collectPageSnapshot() {
     capturedAt: new Date().toISOString(),
     url: location.href,
     title: document.title,
+    userAgent: navigator.userAgent,
     readyState: document.readyState,
     bodyText: (document.body?.innerText || '').slice(0, 50_000),
     dialogs,
@@ -218,6 +240,7 @@ export class PPOQueryDriver {
     this.config = config;
     this.logger = logger;
     this.window = null;
+    this.browserSession = null;
     this.certificateHandlerInstalled = false;
   }
 
@@ -226,6 +249,9 @@ export class PPOQueryDriver {
     const { BrowserWindow, session } = await loadElectron();
     const partition = 'persist:ppo-query-engine';
     const browserSession = session.fromPartition(partition);
+    this.browserSession = browserSession;
+    const compatibleUserAgent = chromeCompatibleUserAgent(browserSession.getUserAgent());
+    if (compatibleUserAgent) browserSession.setUserAgent(compatibleUserAgent);
     if (!this.certificateHandlerInstalled) {
       browserSession.setCertificateVerifyProc((request, callback) => {
         const hostname = String(request.hostname || '').toLowerCase();
@@ -252,29 +278,71 @@ export class PPOQueryDriver {
 
   async execute(input, report) {
     await this.ensureBrowser();
-    const attempts = this.passportAttempts(input).slice(0, this.config.maxRetries + 1);
+    const formats = this.passportAttempts(input).slice(0, this.config.maxRetries + 1);
+    let formatIndex = 0;
+    let attempt = 0;
+    let sessionRecoveryUsed = false;
+    const retryKinds = [];
     let lastError;
-    for (let index = 0; index < attempts.length; index += 1) {
+    while (formatIndex < formats.length) {
+      attempt += 1;
       try {
-        return await this.runAttempt({ ...input, ...attempts[index] }, report, index + 1);
+        const result = await this.runAttempt({ ...input, ...formats[formatIndex] }, report, attempt);
+        return { ...result, retryKinds };
       } catch (error) {
-        error.attempt = index + 1;
+        error.attempt = attempt;
         lastError = error;
-        const canTryAlternate = error.code === 'IDENTITY_MISMATCH' && index + 1 < attempts.length;
+        const canRepairSession = ['OFFICIAL_AUTH_ERROR', 'SESSION_EXPIRED'].includes(error.code) && !sessionRecoveryUsed;
+        if (canRepairSession) {
+          sessionRecoveryUsed = true;
+          retryKinds.push('official_session');
+          report({
+            step: 'retrying_official_session', progress: 10, attempt: attempt + 1,
+            detail: '检测到 PPO 官网内部会话异常，正在重建独立官网会话后重试（最多一次）'
+          });
+          await this.resetOfficialSession();
+          continue;
+        }
+        const canTryAlternate = error.code === 'IDENTITY_MISMATCH' && formatIndex + 1 < formats.length;
         if (!canTryAlternate) {
           if (!error.diagnostic) {
-            error.diagnostic = await this.captureDiagnostics(String(error.code || 'query-failed').toLowerCase()).catch(() => null);
+            error.diagnostic = await this.captureDiagnostics(String(error.code || 'query-failed').toLowerCase(), {
+              attempt,
+              submitState: error.submitState,
+              preSubmitImage: error.preSubmitImage
+            }).catch(() => null);
           }
+          error.retryKinds = retryKinds;
           throw error;
         }
+        formatIndex += 1;
+        retryKinds.push('passport_format');
         report({
-          step: 'retrying_passport_format', progress: 42, attempt: index + 2,
+          step: 'retrying_passport_format', progress: 42, attempt: attempt + 1,
           retryFormat: 'without_prefix',
-          detail: `第 ${index + 2}/${attempts.length} 次：已去除护照英文字母前缀后重试`
+          detail: `已去除护照英文字母前缀，准备第 ${attempt + 1} 次查询（总尝试次数有严格上限）`
         });
       }
     }
+    if (lastError) lastError.retryKinds = retryKinds;
     throw lastError;
+  }
+
+  async resetOfficialSession() {
+    if (this.window && !this.window.isDestroyed()) {
+      await this.window.loadURL('about:blank').catch(() => {});
+      this.window.destroy();
+      this.window = null;
+    }
+    if (this.browserSession) {
+      await this.browserSession.clearStorageData({
+        origin: 'https://www.ppo.gov.eg',
+        storages: ['localstorage', 'indexdb', 'serviceworkers', 'cachestorage']
+      }).catch(() => {});
+      await this.browserSession.clearCache().catch(() => {});
+    }
+    await delay(250);
+    await this.ensureBrowser();
   }
 
   passportAttempts(input) {
@@ -362,8 +430,17 @@ export class PPOQueryDriver {
     if (!submitState.found || !submitState.visible) throw Object.assign(new Error('未找到可用的官网查询按钮'), { code: 'FORM_CHANGED' });
     if (submitState.disabled) throw Object.assign(new Error('官网查询按钮处于禁用状态，请检查表单参数'), { code: 'FORM_NOT_READY' });
     report({ step: 'submitting_query', progress: 48, attempt, detail: '正在触发 PPO 官网查询按钮', diagnostic: submitState.formState });
+    const preSubmitImage = await this.window.webContents.capturePage()
+      .then(image => image.toPNG())
+      .catch(() => null);
     const clicked = await this.executeJavaScript(clickOfficialSubmit);
-    if (!clicked) throw Object.assign(new Error('PPO 官网查询按钮在提交前消失'), { code: 'FORM_CHANGED' });
+    if (!clicked) {
+      const error = Object.assign(new Error('PPO 官网查询按钮在提交前消失'), {
+        code: 'FORM_CHANGED', submitState: submitState.formState
+      });
+      Object.defineProperty(error, 'preSubmitImage', { value: preSubmitImage, enumerable: false });
+      throw error;
+    }
     report({ step: 'waiting_official_result', progress: 60, attempt });
 
     const deadline = Date.now() + this.config.queryTimeoutMs;
@@ -371,7 +448,12 @@ export class PPOQueryDriver {
     let lastProgressReport = 0;
     while (Date.now() < deadline) {
       const state = await this.executeJavaScript(inspectOfficialPage);
-      if (state.kind === 'error') throw this.classifyError(state.text);
+      if (state.kind === 'error') {
+        const error = this.classifyError(state.text);
+        error.submitState = submitState.formState;
+        Object.defineProperty(error, 'preSubmitImage', { value: preSubmitImage, enumerable: false });
+        throw error;
+      }
       if (state.kind === 'result') {
         report({ step: 'parsing_result', progress: 88, attempt });
         return this.parseResult(state.body, state.url, attempt);
@@ -389,23 +471,40 @@ export class PPOQueryDriver {
       }
       await delay(800);
     }
-    const diagnostic = await this.captureDiagnostics('timeout');
+    const diagnostic = await this.captureDiagnostics('timeout', {
+      attempt,
+      submitState: submitState.formState,
+      preSubmitImage
+    });
     throw Object.assign(new Error(`官方查询超过 ${this.config.queryTimeoutMs / 1000} 秒未返回`), { code: 'QUERY_TIMEOUT', diagnostic });
   }
 
-  async captureDiagnostics(reason) {
+  async captureDiagnostics(reason, context = {}) {
     const diagnosticDir = path.join(this.config.dataDir, 'diagnostics');
     fs.mkdirSync(diagnosticDir, { recursive: true, mode: 0o700 });
-    const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${reason}`;
+    const safeReason = String(reason || 'query-failed').replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80);
+    const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${safeReason}`;
     const snapshotPath = path.join(diagnosticDir, `${stamp}.json`);
     const screenshotPath = path.join(diagnosticDir, `${stamp}.png`);
-    const snapshot = await this.executeJavaScript(collectPageSnapshot).catch(error => ({
+    const preSubmitScreenshotPath = path.join(diagnosticDir, `${stamp}-before-submit.png`);
+    const pageSnapshot = await this.executeJavaScript(collectPageSnapshot).catch(error => ({
       capturedAt: new Date().toISOString(),
       captureError: error.message,
       url: this.window?.webContents.getURL() || ''
     }));
+    const snapshot = {
+      ...pageSnapshot,
+      queryContext: {
+        attempt: context.attempt || null,
+        submitState: context.submitState || null
+      }
+    };
     fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2), { encoding: 'utf8', mode: 0o600 });
+    if (Buffer.isBuffer(context.preSubmitImage) && context.preSubmitImage.length) {
+      fs.writeFileSync(preSubmitScreenshotPath, context.preSubmitImage, { mode: 0o600 });
+    }
     try {
+      await delay(150);
       const image = await this.window.webContents.capturePage();
       fs.writeFileSync(screenshotPath, image.toPNG(), { mode: 0o600 });
     } catch {}
@@ -413,11 +512,14 @@ export class PPOQueryDriver {
       reason,
       url: snapshot.url || '',
       title: snapshot.title || '',
+      userAgent: snapshot.userAgent || '',
       readyState: snapshot.readyState || '',
       bodyLength: snapshot.bodyText?.length || 0,
       dialogCount: snapshot.dialogs?.length || 0,
+      submitState: context.submitState || null,
       snapshotPath,
-      screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null
+      screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null,
+      preSubmitScreenshotPath: fs.existsSync(preSubmitScreenshotPath) ? preSubmitScreenshotPath : null
     };
   }
 
@@ -439,5 +541,6 @@ export class PPOQueryDriver {
   async close() {
     if (this.window && !this.window.isDestroyed()) this.window.destroy();
     this.window = null;
+    this.browserSession = null;
   }
 }

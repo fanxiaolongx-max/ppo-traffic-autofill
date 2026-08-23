@@ -146,6 +146,11 @@ export class QueryQueue {
             ...auditContext(record), attempt: update.attempt,
             retryFormat: update.retryFormat || 'alternate'
           });
+        } else if (update.step === 'retrying_official_session') {
+          this.logger.warn('official_session_recovery_started', {
+            ...auditContext(record), attempt: update.attempt,
+            detail: update.detail || null
+          });
         } else if (update.step !== lastLoggedStep) {
           lastLoggedStep = update.step;
           this.logger.info('query_progress', {
@@ -167,7 +172,12 @@ export class QueryQueue {
       this.logger.info('query_completed', { ...auditContext(record), result: safeResult });
       this.store.addServiceEvent?.('official', 'operational', 'QUERY_SUCCESS', '最近一次 PPO 官网查询成功', { traceId: record.traceId });
       if (Number(result.attempt) > 1) {
-        this.logger.info('passport_retry_finished', { ...auditContext(record), attempt: result.attempt, outcome: 'success' });
+        if (result.retryKinds?.includes('official_session')) {
+          this.logger.info('official_session_recovery_finished', { ...auditContext(record), attempt: result.attempt, outcome: 'success' });
+        }
+        if (result.retryKinds?.includes('passport_format')) {
+          this.logger.info('passport_retry_finished', { ...auditContext(record), attempt: result.attempt, outcome: 'success' });
+        }
       }
       this.emit(record);
     } catch (error) {
@@ -175,6 +185,7 @@ export class QueryQueue {
         code: error.code || 'QUERY_FAILED', message: error.message,
         officialMessage: error.officialMessage || null,
         attempt: error.attempt || record.attempt || 1,
+        retryKinds: error.retryKinds || [],
         diagnostic: error.diagnostic || null,
         stack: error.stack
       };
@@ -184,7 +195,12 @@ export class QueryQueue {
       });
       this.logger.error('query_failed', { ...auditContext(record), attempt: errorInfo.attempt, error: errorInfo });
       if (Number(errorInfo.attempt) > 1) {
-        this.logger.warn('passport_retry_finished', { ...auditContext(record), attempt: errorInfo.attempt, outcome: 'failed', code: errorInfo.code });
+        if (errorInfo.retryKinds.includes('official_session')) {
+          this.logger.warn('official_session_recovery_finished', { ...auditContext(record), attempt: errorInfo.attempt, outcome: 'failed', code: errorInfo.code });
+        }
+        if (errorInfo.retryKinds.includes('passport_format')) {
+          this.logger.warn('passport_retry_finished', { ...auditContext(record), attempt: errorInfo.attempt, outcome: 'failed', code: errorInfo.code });
+        }
       }
       const infrastructureFailure = isInfrastructureError(errorInfo.code);
       if (infrastructureFailure) this.failureStreak += 1;

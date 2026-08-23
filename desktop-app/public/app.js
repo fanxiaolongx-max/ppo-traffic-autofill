@@ -16,7 +16,7 @@ let activeLetterSlot = 'letter1';
 const steps = {
   queued: '等待执行', starting_browser: '正在启动浏览器', opening_official_site: '正在打开 PPO 官网', initializing_official_form: '正在初始化官网表单',
   filling_form: '正在填写查询信息', submitting_query: '正在提交查询', waiting_official_result: '等待官方结果',
-  retrying_passport_format: '正在切换护照格式重试', parsing_result: '正在解析查询结果', completed: '查询完成',
+  retrying_passport_format: '正在切换护照格式重试', retrying_official_session: '正在重建 PPO 官网会话', parsing_result: '正在解析查询结果', completed: '查询完成',
   failed: '查询失败', queue_expired: '排队超时，任务已终止', cancelled: '已取消', process_restarted: '程序重启，任务中断'
 };
 const statusMeta = status => {

@@ -5,7 +5,7 @@ const hashToken = new URLSearchParams(location.hash.slice(1)).get('desktopToken'
 if (hashToken) sessionStorage.setItem('ppo-desktop-token', hashToken);
 const token = hashToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashToken) history.replaceState(null, '', '/admin');
-const state = { auth:null, csrfToken:'', overview:null, queries:[], queryCursor:'', feedback:[], feedbackCursor:'', logs:[], logCursor:'', serviceEvents:[], serviceCursor:'', attachmentUrls:[] };
+const state = { auth:null, csrfToken:'', overview:null, queries:[], queryCursor:'', feedback:[], feedbackCursor:'', logs:[], logCursor:'', serviceEvents:[], serviceCursor:'', attachmentUrls:[], diagnosticUrls:[] };
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char]); }
 function formatTime(value) { return value ? new Date(value).toLocaleString(getLanguage()==='en'?'en':'zh-CN') : '—'; }
@@ -119,7 +119,21 @@ function bindFeedbackButtons() { document.querySelectorAll('[data-feedback-id]')
 
 async function showQuery(id) {
   const record=await adminApi(`/api/v1/admin/queries/${encodeURIComponent(id)}`), request=record.request||{};
-  $('#query-detail').innerHTML=`<dl class="detail-grid"><dt>状态</dt><dd>${statusLabel(record.status)}</dd><dt>任务 / 追踪编号</dt><dd class="mono">${escapeHtml(record.id)}<br>${escapeHtml(record.traceId)}</dd><dt>车牌 / 完整证件</dt><dd class="mono">${escapeHtml(requestSummary(record))} · ${escapeHtml(request.documentNumber||'—')}</dd><dt>来源 / IP</dt><dd>${escapeHtml(record.source)} · <span class="mono">${escapeHtml(record.sourceIp||'—')}</span></dd><dt>IP 归属信息</dt><dd>${escapeHtml(geoText(record.geo))}<br><span class="muted">${t('时区')} ${escapeHtml(record.geo?.timezone||'—')}</span></dd><dt>设备标识</dt><dd class="mono">${escapeHtml(record.deviceId||'—')}</dd><dt>User-Agent</dt><dd>${escapeHtml(record.userAgent||'—')}</dd><dt>创建 / 完成</dt><dd>${formatTime(record.createdAt)} / ${formatTime(record.finishedAt)}</dd><dt>结果</dt><dd>${escapeHtml(queryResultText(record))}</dd><dt>官网原始提示</dt><dd dir="auto">${escapeHtml(record.error?.officialMessage||'—')}</dd></dl><div class="event-list">${record.events.map(event=>`<article><strong>${escapeHtml(event.step||event.event)}</strong><small>${formatTime(event.createdAt)} · ${event.progress??'—'}% · ${escapeHtml(event.details?.detail||'')}</small></article>`).join('')}</div>`; $('#query-dialog').showModal();
+  for(const url of state.diagnosticUrls) URL.revokeObjectURL(url); state.diagnosticUrls=[];
+  const hasDiagnostics=record.diagnostics&&Object.values(record.diagnostics).some(Boolean);
+  $('#query-detail').innerHTML=`<dl class="detail-grid"><dt>状态</dt><dd>${statusLabel(record.status)}</dd><dt>任务 / 追踪编号</dt><dd class="mono">${escapeHtml(record.id)}<br>${escapeHtml(record.traceId)}</dd><dt>车牌 / 完整证件</dt><dd class="mono">${escapeHtml(requestSummary(record))} · ${escapeHtml(request.documentNumber||'—')}</dd><dt>来源 / IP</dt><dd>${escapeHtml(record.source)} · <span class="mono">${escapeHtml(record.sourceIp||'—')}</span></dd><dt>IP 归属信息</dt><dd>${escapeHtml(geoText(record.geo))}<br><span class="muted">${t('时区')} ${escapeHtml(record.geo?.timezone||'—')}</span></dd><dt>设备标识</dt><dd class="mono">${escapeHtml(record.deviceId||'—')}</dd><dt>User-Agent</dt><dd>${escapeHtml(record.userAgent||'—')}</dd><dt>创建 / 完成</dt><dd>${formatTime(record.createdAt)} / ${formatTime(record.finishedAt)}</dd><dt>结果</dt><dd>${escapeHtml(queryResultText(record))}</dd><dt>官网原始提示</dt><dd dir="auto">${escapeHtml(record.error?.officialMessage||'—')}</dd><dt>${t('提交现场')}</dt><dd class="mono">${escapeHtml(record.error?.diagnostic?.submitState?JSON.stringify(record.error.diagnostic.submitState):'—')}</dd></dl>${hasDiagnostics?`<section class="query-diagnostics"><h3>${t('失败诊断文件')}</h3><p class="muted">${t('仅管理员可访问，包含失败前后的官网现场。')}</p><div id="query-diagnostics-view" class="attachment-grid"><span class="muted">${t('正在加载…')}</span></div></section>`:''}<div class="event-list">${record.events.map(event=>`<article><strong>${escapeHtml(event.step||event.event)}</strong><small>${formatTime(event.createdAt)} · ${event.progress??'—'}% · ${escapeHtml(event.details?.detail||'')}</small></article>`).join('')}</div>`; $('#query-dialog').showModal();
+  if(hasDiagnostics) {
+    const view=$('#query-diagnostics-view'); view.innerHTML='';
+    const files=[['before','提交前截图','image'],['after','失败现场截图','image'],['snapshot','诊断快照 JSON','file']].filter(([kind])=>record.diagnostics[kind]);
+    for(const [kind,label,type] of files) {
+      try {
+        const blob=await adminAttachment(`/api/v1/admin/queries/${encodeURIComponent(id)}/diagnostics/${kind}`);
+        const objectUrl=URL.createObjectURL(blob); state.diagnosticUrls.push(objectUrl);
+        const preview=type==='image'?`<img src="${objectUrl}" alt="${escapeHtml(t(label))}">`:'<span class="attachment-file-icon">📋</span>';
+        view.insertAdjacentHTML('beforeend',`<a class="attachment-card" href="${objectUrl}" download target="_blank" rel="noopener">${preview}<strong>${escapeHtml(t(label))}</strong><small>${t('查看或下载')}</small></a>`);
+      } catch(error) { view.insertAdjacentHTML('beforeend',`<p class="form-message">${escapeHtml(error.message)}</p>`); }
+    }
+  }
 }
 async function showFeedback(id) {
   const item=await adminApi(`/api/v1/admin/feedback/${encodeURIComponent(id)}`);

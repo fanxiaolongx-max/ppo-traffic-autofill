@@ -136,9 +136,10 @@ function statusSnapshot({ includeInternal = false, eventLimit = 20, eventCursor 
 function adminSummaryRecord(record) {
   if (!record) return null;
   const value = { ...record };
-  if (value.result?.rawText) {
+  if (value.result?.rawText || value.result?.diagnostic) {
     value.result = { ...value.result };
     delete value.result.rawText;
+    delete value.result.diagnostic;
   }
   if (value.error?.stack || value.error?.diagnostic) {
     value.error = { ...value.error };
@@ -150,13 +151,14 @@ function adminSummaryRecord(record) {
 
 const DIAGNOSTIC_FILE_FIELDS = {
   before: { field: 'preSubmitScreenshotPath', mime: 'image/png', extension: '.png', name: 'before-submit.png' },
-  after: { field: 'screenshotPath', mime: 'image/png', extension: '.png', name: 'after-failure.png' },
+  after: { field: 'screenshotPath', mime: 'image/png', extension: '.png', name: 'final-page.png' },
   snapshot: { field: 'snapshotPath', mime: 'application/json; charset=utf-8', extension: '.json', name: 'diagnostic-snapshot.json' }
 };
 
 function diagnosticFile(record, kind) {
   const descriptor = DIAGNOSTIC_FILE_FIELDS[kind];
-  const candidate = descriptor && record?.error?.diagnostic?.[descriptor.field];
+  const sourceDiagnostic = record?.result?.diagnostic || record?.error?.diagnostic;
+  const candidate = descriptor && sourceDiagnostic?.[descriptor.field];
   if (!candidate || path.extname(candidate).toLowerCase() !== descriptor.extension) return null;
   const root = path.resolve(config.dataDir, 'diagnostics');
   const resolved = path.resolve(candidate);
@@ -173,21 +175,21 @@ function diagnosticFile(record, kind) {
 
 function adminDetailRecord(record) {
   const value = adminSummaryRecord(record);
-  const sourceDiagnostic = record?.error?.diagnostic;
-  if (record?.error && sourceDiagnostic) {
-    value.error = {
-      ...value.error,
-      diagnostic: {
-        reason: sourceDiagnostic.reason || null,
-        url: sourceDiagnostic.url || null,
-        title: sourceDiagnostic.title || null,
-        userAgent: sourceDiagnostic.userAgent || null,
-        readyState: sourceDiagnostic.readyState || null,
-        bodyLength: sourceDiagnostic.bodyLength || 0,
-        dialogCount: sourceDiagnostic.dialogCount || 0,
-        submitState: sourceDiagnostic.submitState || null
-      }
-    };
+  const sourceDiagnostic = record?.result?.diagnostic || record?.error?.diagnostic;
+  const safeDiagnostic = sourceDiagnostic ? {
+    reason: sourceDiagnostic.reason || null,
+    url: sourceDiagnostic.url || null,
+    title: sourceDiagnostic.title || null,
+    userAgent: sourceDiagnostic.userAgent || null,
+    readyState: sourceDiagnostic.readyState || null,
+    bodyLength: sourceDiagnostic.bodyLength || 0,
+    dialogCount: sourceDiagnostic.dialogCount || 0,
+    submitState: sourceDiagnostic.submitState || null
+  } : null;
+  if (record?.result && safeDiagnostic) {
+    value.result = { ...value.result, diagnostic: safeDiagnostic };
+  } else if (record?.error && safeDiagnostic) {
+    value.error = { ...value.error, diagnostic: safeDiagnostic };
   }
   value.diagnostics = {
     before: Boolean(diagnosticFile(record, 'before')),
@@ -195,6 +197,18 @@ function adminDetailRecord(record) {
     snapshot: Boolean(diagnosticFile(record, 'snapshot'))
   };
   return value;
+}
+
+function serveDiagnosticFile(response, file) {
+  response.writeHead(200, {
+    'content-type': file.mime,
+    'content-length': String(fs.statSync(file.path).size),
+    'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+    'cross-origin-resource-policy': 'same-origin'
+  });
+  fs.createReadStream(file.path).pipe(response);
 }
 
 function json(response, status, body, headers = {}) {
@@ -457,14 +471,7 @@ export const server = http.createServer(async (request, response) => {
       const record = store.getQuery(adminDiagnostic[1]);
       const file = record && diagnosticFile(record, adminDiagnostic[2]);
       if (!file) return json(response, 404, { error: { code: 'NOT_FOUND', message: '该查询没有可用的诊断文件' } });
-      response.writeHead(200, {
-        'content-type': file.mime,
-        'content-length': String(fs.statSync(file.path).size),
-        'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-        'cache-control': 'private, no-store',
-        'x-content-type-options': 'nosniff'
-      });
-      fs.createReadStream(file.path).pipe(response);
+      serveDiagnosticFile(response, file);
       return;
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/feedback') {
@@ -591,6 +598,17 @@ export const server = http.createServer(async (request, response) => {
       logger.info('feedback_submitted', { feedbackId: item.id, sourceIp: ip, deviceId, hasPhone: Boolean(input.phone), hasWechat: Boolean(input.wechat), attachmentCount: attachments.length, attachmentBytes: attachments.reduce((sum, entry) => sum + entry.size, 0) });
       void geoResolver.lookup(ip).then(geo => store.setFeedbackGeo(item.id, geo));
       return json(response, 201, { id: item.id, message: '感谢反馈，我们已收到。' });
+    }
+    const queryDiagnostic = url.pathname.match(/^\/api\/v1\/queries\/([^/]+)\/diagnostics\/(before|after)$/);
+    if (request.method === 'GET' && queryDiagnostic) {
+      const record = store.getQuery(queryDiagnostic[1]);
+      const privileged = isPrivileged(request);
+      const deviceId = deviceIdentity(request, url, { privileged });
+      if (record && !privileged && record.deviceId !== deviceId) return json(response, 404, { error: { code: 'NOT_FOUND', message: '查询任务不存在' } });
+      const file = record && diagnosticFile(record, queryDiagnostic[2]);
+      if (!file) return json(response, 404, { error: { code: 'NOT_FOUND', message: '该查询没有可用的现场截图' } });
+      serveDiagnosticFile(response, file);
+      return;
     }
     const detail = url.pathname.match(/^\/api\/v1\/queries\/([^/]+)$/);
     if (request.method === 'GET' && detail) {

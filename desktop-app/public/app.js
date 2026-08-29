@@ -9,7 +9,7 @@ const hashDesktopToken = new URLSearchParams(window.location.hash.slice(1)).get(
 if (hashDesktopToken) sessionStorage.setItem('ppo-desktop-token', hashDesktopToken);
 const desktopToken = hashDesktopToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashDesktopToken) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-const state = { history: [], queue: null, status: null, historyCursor: '', historyHasMore: false };
+const state = { history: [], queue: null, status: null, historyCursor: '', historyHasMore: false, evidenceUrls: [] };
 const plateLetters = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
 const normalizePlateLetter = value => String(value || '').replaceAll('\u0640', '').trim();
 let activeLetterSlot = 'letter1';
@@ -131,6 +131,15 @@ async function api(path, options = {}) {
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error?.message || '请求失败'), data.error || {});
   return data;
+}
+
+async function queryScreenshot(path) {
+  const response = await fetch(path, { headers: { 'x-device-id': deviceId() } });
+  if (!response.ok) {
+    let data = {}; try { data = await response.json(); } catch {}
+    throw new Error(data.error?.message || t('现场截图读取失败'));
+  }
+  return response.blob();
 }
 
 async function refresh() {
@@ -264,6 +273,8 @@ function initializeAdminEntry() {
 
 async function showDetail(id) {
   const item = await api(`/api/v1/queries/${encodeURIComponent(id)}`);
+  for (const url of state.evidenceUrls) URL.revokeObjectURL(url);
+  state.evidenceUrls = [];
   const meta = statusMeta(item.status);
   const req = item.request || {};
   const maskedDocument = req.documentNumber || '—';
@@ -277,8 +288,21 @@ async function showDetail(id) {
     <dt>${t('查询尝试')}</dt><dd>${getLanguage() === 'en' ? `${escapeHtml(attempt)} ${Number(attempt) === 1 ? 'attempt' : 'attempts'}` : `${escapeHtml(attempt)} 次`}</dd>
     <dt>${t('失败原因')}</dt><dd>${escapeHtml(item.error ? localizeError(item.error) : '—')}</dd>
     <dt>${t('官网提示')}</dt><dd dir="auto">${escapeHtml(item.error?.officialMessage || '—')}</dd>
-  </dl><div class="timeline">${item.events.map(event => `<div>${escapeHtml(localizeTimelineStep(steps[event.step] || event.event))}${event.detail ? `<p>${escapeHtml(localizeTimelineDetail(event.detail))}</p>` : ''}<small>${new Date(event.createdAt).toLocaleString(locale)}${event.progress != null ? ` · ${event.progress}%` : ''}${event.attempt ? (getLanguage() === 'en' ? ` · Attempt ${event.attempt}` : ` · 第 ${event.attempt} 次`) : ''}</small></div>`).join('')}</div>`;
+  </dl>${item.diagnostics&&Object.values(item.diagnostics).some(Boolean)?`<section class="query-evidence"><h3>${t('查询现场截图')}</h3><p>${t('截图包含实际提交前表单和 PPO 最终结果或报错页面，仅当前设备可查看。')}</p><div id="query-evidence-grid" class="query-evidence-grid"><span class="muted">${t('正在加载…')}</span></div></section>`:''}<div class="timeline">${item.events.map(event => `<div>${escapeHtml(localizeTimelineStep(steps[event.step] || event.event))}${event.detail ? `<p>${escapeHtml(localizeTimelineDetail(event.detail))}</p>` : ''}<small>${new Date(event.createdAt).toLocaleString(locale)}${event.progress != null ? ` · ${event.progress}%` : ''}${event.attempt ? (getLanguage() === 'en' ? ` · Attempt ${event.attempt}` : ` · 第 ${event.attempt} 次`) : ''}</small></div>`).join('')}</div>`;
   $('#detail-dialog').showModal();
+  if (item.diagnostics && Object.values(item.diagnostics).some(Boolean)) {
+    const grid = $('#query-evidence-grid'); grid.innerHTML = '';
+    const files = [['before','提交前截图'],['after','最终结果或报错截图']].filter(([kind]) => item.diagnostics[kind]);
+    for (const [kind,label] of files) {
+      try {
+        const blob = await queryScreenshot(`/api/v1/queries/${encodeURIComponent(id)}/diagnostics/${kind}`);
+        const objectUrl = URL.createObjectURL(blob); state.evidenceUrls.push(objectUrl);
+        grid.insertAdjacentHTML('beforeend', `<a class="query-evidence-card" href="${objectUrl}" target="_blank" rel="noopener"><img src="${objectUrl}" alt="${escapeHtml(t(label))}"><strong>${escapeHtml(t(label))}</strong><small>${t('点击查看原图')}</small></a>`);
+      } catch (error) {
+        grid.insertAdjacentHTML('beforeend', `<p class="form-message">${escapeHtml(error.message)}</p>`);
+      }
+    }
+  }
 }
 
 function savedProfiles() {
@@ -370,7 +394,11 @@ $('#document-number').addEventListener('input', event => {
   updateDocumentHint();
 });
 $('#toggle-document').addEventListener('click', () => { const input = $('#document-number'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggle-document').textContent = t(input.type === 'password' ? '显示' : '隐藏'); });
-$('#close-dialog').addEventListener('click', () => $('#detail-dialog').close());
+$('#close-dialog').addEventListener('click', () => {
+  $('#detail-dialog').close();
+  for (const url of state.evidenceUrls) URL.revokeObjectURL(url);
+  state.evidenceUrls = [];
+});
 $('#refresh-history').addEventListener('click', () => { state.historyCursor = ''; refresh(); });
 $('#load-more-history').addEventListener('click', async () => {
   const button = $('#load-more-history');

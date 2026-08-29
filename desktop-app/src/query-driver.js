@@ -456,7 +456,18 @@ export class PPOQueryDriver {
       }
       if (state.kind === 'result') {
         report({ step: 'parsing_result', progress: 88, attempt });
-        return this.parseResult(state.body, state.url, attempt);
+        const diagnostic = await this.captureDiagnostics('success', {
+          attempt,
+          submitState: submitState.formState,
+          preSubmitImage
+        }).catch(error => {
+          this.logger?.warn?.('query_success_diagnostic_failed', {
+            attempt,
+            error: { message: error.message, code: error.code || null }
+          });
+          return null;
+        });
+        return { ...this.parseResult(state.body, state.url, attempt), diagnostic };
       }
       const waitedSeconds = Math.floor((Date.now() - waitStartedAt) / 1000);
       if (waitedSeconds >= lastProgressReport + 5) {

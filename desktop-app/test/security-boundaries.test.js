@@ -7,7 +7,7 @@ const request = { letter1: 'أ', letter2: 'ف', letter3: 'س', plateNumber: '341
 test('public records mask documents and never expose request metadata', () => {
   const visible = publicRecord({
     id: 'q1', deviceId: 'private-device', sourceIp: '1.2.3.4', userAgent: 'secret-agent', geo: { country: 'Egypt', city: 'Cairo' },
-    fingerprint: 'secret-fingerprint', request, result: { totalFine: '1000 جنيه', rawText: 'private page' },
+    fingerprint: 'secret-fingerprint', request, result: { totalFine: '1000 جنيه', rawText: 'private page', diagnostic: { snapshotPath: '/private/result.json', screenshotPath: '/private/result.png', preSubmitScreenshotPath: '/private/before.png', reason: 'success' } },
     error: { message: 'failed', stack: 'private stack', diagnostic: { snapshotPath: '/private/file', reason: 'timeout' } }
   }, true);
   assert.equal(visible.deviceId, undefined);
@@ -17,6 +17,8 @@ test('public records mask documents and never expose request metadata', () => {
   assert.equal(visible.fingerprint, undefined);
   assert.equal(visible.request.documentNumber, 'EA*****02');
   assert.equal(visible.result.rawText, undefined);
+  assert.equal(visible.result.diagnostic.snapshotPath, undefined);
+  assert.deepEqual(visible.diagnostics, { before: true, after: true });
   assert.equal(visible.error.stack, undefined);
   assert.equal(visible.error.diagnostic.snapshotPath, undefined);
 });

@@ -315,9 +315,24 @@ export function publicRecord(record, includeRequest = false) {
         : '*'.repeat(documentNumber.length)
     };
   }
-  if (value.result?.rawText) {
+  const sourceDiagnostic = value.result?.diagnostic || value.error?.diagnostic;
+  value.diagnostics = {
+    before: Boolean(sourceDiagnostic?.preSubmitScreenshotPath),
+    after: Boolean(sourceDiagnostic?.screenshotPath)
+  };
+  if (value.result?.rawText || value.result?.diagnostic) {
     value.result = { ...value.result };
     delete value.result.rawText;
+    if (value.result.diagnostic) {
+      value.result.diagnostic = {
+        reason: value.result.diagnostic.reason,
+        url: value.result.diagnostic.url,
+        title: value.result.diagnostic.title,
+        readyState: value.result.diagnostic.readyState,
+        bodyLength: value.result.diagnostic.bodyLength,
+        dialogCount: value.result.diagnostic.dialogCount
+      };
+    }
   }
   if (value.error) {
     const diagnostic = value.error.diagnostic ? {

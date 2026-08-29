@@ -133,6 +133,29 @@ export class Store {
         value_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS sms_deliveries (
+        id TEXT PRIMARY KEY,
+        query_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        rule_id TEXT NOT NULL,
+        match_type TEXT NOT NULL,
+        match_value TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        message_text TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        api_url TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        provider_message_id TEXT,
+        provider_status TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(query_id, rule_id),
+        FOREIGN KEY(query_id) REFERENCES queries(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_sms_deliveries_page ON sms_deliveries(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_sms_deliveries_status ON sms_deliveries(status, created_at);
       CREATE TABLE IF NOT EXISTS ip_geo_cache (
         ip TEXT PRIMARY KEY,
         geo_json TEXT NOT NULL,
@@ -149,6 +172,7 @@ export class Store {
     this.rebuildSearchText();
     this.db.prepare("UPDATE queries SET status='interrupted', step='process_restarted', finished_at=?, updated_at=? WHERE status='running'")
       .run(new Date().toISOString(), new Date().toISOString());
+    this.db.prepare("UPDATE sms_deliveries SET status='queued', updated_at=? WHERE status='sending'").run(new Date().toISOString());
   }
 
   rebuildSearchText() {
@@ -480,6 +504,57 @@ export class Store {
       .run(key, JSON.stringify(value), new Date().toISOString());
   }
 
+  createSmsDelivery(value) {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`INSERT OR IGNORE INTO sms_deliveries (
+      id, query_id, trace_id, rule_id, match_type, match_value, recipient, message_text,
+      idempotency_key, api_url, status, attempts, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?)`).run(
+      value.id, value.queryId, value.traceId, value.ruleId, value.matchType, value.matchValue,
+      value.to, value.text, value.idempotencyKey, value.apiUrl, now, now
+    );
+    return result.changes ? this.getSmsDelivery(value.id) : null;
+  }
+
+  getSmsDelivery(id) {
+    return this.mapSmsDelivery(this.db.prepare('SELECT * FROM sms_deliveries WHERE id=?').get(id));
+  }
+
+  nextSmsDelivery() {
+    return this.mapSmsDelivery(this.db.prepare("SELECT * FROM sms_deliveries WHERE status='queued' ORDER BY created_at, id LIMIT 1").get());
+  }
+
+  updateSmsDelivery(id, patch) {
+    const fields = [];
+    const values = [];
+    const columns = { status: 'status', attempts: 'attempts', providerMessageId: 'provider_message_id', providerStatus: 'provider_status', error: 'error' };
+    for (const [key, column] of Object.entries(columns)) {
+      if (patch[key] !== undefined) { fields.push(`${column}=?`); values.push(patch[key] || (key === 'attempts' ? 0 : null)); }
+    }
+    if (!fields.length) return this.getSmsDelivery(id);
+    fields.push('updated_at=?'); values.push(new Date().toISOString(), id);
+    this.db.prepare(`UPDATE sms_deliveries SET ${fields.join(', ')} WHERE id=?`).run(...values);
+    return this.getSmsDelivery(id);
+  }
+
+  listSmsDeliveries({ limit = 20, cursor = '' } = {}) {
+    const safeLimit = Math.max(1, Math.min(100, Number(limit) || 20));
+    const decoded = decodeCursor(cursor, 'sms');
+    const conditions = [];
+    const values = [];
+    if (decoded?.createdAt && decoded?.id) {
+      conditions.push('(created_at<? OR (created_at=? AND id<?))');
+      values.push(decoded.createdAt, decoded.createdAt, decoded.id);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = this.db.prepare(`SELECT * FROM sms_deliveries ${where} ORDER BY created_at DESC, id DESC LIMIT ?`).all(...values, safeLimit + 1);
+    const hasMore = rows.length > safeLimit;
+    const page = rows.slice(0, safeLimit);
+    const last = page.at(-1);
+    const total = Number(this.db.prepare('SELECT COUNT(*) AS count FROM sms_deliveries').get()?.count || 0);
+    return { items: page.map(row => this.mapSmsDelivery(row)), total, hasMore, nextCursor: hasMore && last ? encodeCursor({ type: 'sms', createdAt: last.created_at, id: last.id }) : null };
+  }
+
   close() {
     this.db.close();
   }
@@ -537,6 +612,17 @@ export class Store {
       content: row.content, pageUrl: row.page_url || '', status: row.status, adminNote: row.admin_note || '',
       attachments: row.attachments_json ? JSON.parse(row.attachments_json) : [],
       createdAt: row.created_at, updatedAt: row.updated_at
+    };
+  }
+
+  mapSmsDelivery(row) {
+    if (!row) return null;
+    return {
+      id: row.id, queryId: row.query_id, traceId: row.trace_id, ruleId: row.rule_id,
+      matchType: row.match_type, matchValue: row.match_value, to: row.recipient, text: row.message_text,
+      idempotencyKey: row.idempotency_key, apiUrl: row.api_url, status: row.status,
+      attempts: Number(row.attempts || 0), providerMessageId: row.provider_message_id || '',
+      providerStatus: row.provider_status || '', error: row.error || '', createdAt: row.created_at, updatedAt: row.updated_at
     };
   }
 }

@@ -21,7 +21,7 @@ if (!privateKey) throw new Error('Missing CORE_SIGNING_PRIVATE_KEY or CORE_SIGNI
 const sourceFiles = [
   'admin-auth.js', 'client-ip.js', 'config.js', 'db.js', 'feedback-attachments.js', 'ip-geo.js',
   'logger.js', 'official-error.js', 'query-driver.js', 'queue.js', 'rate-limit.js', 'result-parser.js',
-  'server.js', 'validation.js'
+  'secret-store.js', 'server.js', 'sms-notifier.js', 'validation.js'
 ];
 
 function canonicalJson(value) {

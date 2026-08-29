@@ -14,12 +14,15 @@ import { AdminAuth } from './admin-auth.js';
 import { IpGeoResolver } from './ip-geo.js';
 import { isTrustedProxyRequest, resolveClientIp } from './client-ip.js';
 import { decodeFeedbackAttachments, feedbackAttachmentPath, saveFeedbackAttachments } from './feedback-attachments.js';
+import { SecretStore } from './secret-store.js';
+import { SmsNotifier } from './sms-notifier.js';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.logDir, { recursive: true });
 const logger = new AuditLogger(config.logDir);
 logger.cleanup(config.logRetentionDays);
 const store = new Store(config.dataDir);
+const secretStore = new SecretStore(config.dataDir);
 store.cleanupServiceEvents(config.logRetentionDays);
 const limiter = new RateLimiter(config);
 const adminAuth = new AdminAuth({ store, config, logger });
@@ -46,6 +49,7 @@ const broadcast = record => {
   }
 };
 const driver = new PPOQueryDriver(config, logger);
+const smsNotifier = new SmsNotifier({ store, logger, config, secretStore });
 
 let repairedResultCount = 0;
 for (const record of store.list(500, ['success'])) {
@@ -59,7 +63,7 @@ for (const record of store.list(500, ['success'])) {
 }
 if (repairedResultCount) logger.info('stored_results_reparsed', { repairedCount: repairedResultCount });
 
-queue = new QueryQueue({ store, driver, config, logger, broadcast });
+queue = new QueryQueue({ store, driver, config, logger, broadcast, onTerminal: record => smsNotifier.handleTerminal(record) });
 const heartbeatTimer = setInterval(() => {
   const now = Date.now();
   for (const client of clients) {
@@ -430,6 +434,23 @@ export const server = http.createServer(async (request, response) => {
       json(response, 202, { accepted: true, operation, message: operation === 'update' ? '核心更新已开始，切换期间会短暂显示维护页' : '核心回滚已开始' });
       setTimeout(() => control[operation]().catch?.(error => logger.error('core_operation_failed', { operation, error: { message: error.message, stack: error.stack } })), 100).unref?.();
       return;
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/sms/config') {
+      requireAdmin(request);
+      return json(response, 200, smsNotifier.getConfig());
+    }
+    if (request.method === 'PUT' && url.pathname === '/api/v1/admin/sms/config') {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const result = smsNotifier.configure(await body(request));
+      return json(response, 200, result);
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/sms/deliveries') {
+      requireAdmin(request);
+      return json(response, 200, store.listSmsDeliveries({
+        limit: Math.min(Number(url.searchParams.get('limit')) || 20, 100),
+        cursor: url.searchParams.get('cursor') || ''
+      }));
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/logs') {
       requireAdmin(request);

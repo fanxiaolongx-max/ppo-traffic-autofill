@@ -65,5 +65,9 @@ export const config = Object.freeze({
   ipGeoEnabled: bool('PPO_IP_GEO_ENABLED', true),
   ipGeoEndpoint: process.env.PPO_IP_GEO_ENDPOINT || 'https://ipwho.is',
   ipGeoTimeoutMs: integer('PPO_IP_GEO_TIMEOUT_MS', 3_000, 500),
-  ipGeoCacheDays: integer('PPO_IP_GEO_CACHE_DAYS', 30, 1)
+  ipGeoCacheDays: integer('PPO_IP_GEO_CACHE_DAYS', 30, 1),
+  smsApiUrl: process.env.SMS_API_URL || 'https://app.fanxiaolong.uk/api/v1/sms/messages',
+  smsApiToken: process.env.SMS_API_TOKEN || '',
+  smsTimeoutMs: integer('PPO_SMS_TIMEOUT_MS', 8_000, 1_000),
+  smsMaxAttempts: integer('PPO_SMS_MAX_ATTEMPTS', 2, 1)
 });

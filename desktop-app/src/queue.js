@@ -22,8 +22,8 @@ function auditContext(value, extra = {}) {
 }
 
 export class QueryQueue {
-  constructor({ store, driver, config, logger, broadcast }) {
-    Object.assign(this, { store, driver, config, logger, broadcast });
+  constructor({ store, driver, config, logger, broadcast, onTerminal = null }) {
+    Object.assign(this, { store, driver, config, logger, broadcast, onTerminal });
     this.pending = [];
     this.running = false;
     this.currentId = null;
@@ -117,6 +117,7 @@ export class QueryQueue {
         this.logger.warn('query_queue_expired', { ...auditContext(expired), queuedForMs });
         this.store.addServiceEvent?.('queue', 'degraded', 'QUEUE_EXPIRED', '排队任务等待超时后已安全终止', { queuedForMs }, { force: true });
         this.emit(expired);
+        this.notifyTerminal(expired);
         continue;
       }
       record = candidate;
@@ -180,6 +181,7 @@ export class QueryQueue {
         }
       }
       this.emit(record);
+      this.notifyTerminal(record);
     } catch (error) {
       const errorInfo = {
         code: error.code || 'QUERY_FAILED', message: error.message,
@@ -214,6 +216,7 @@ export class QueryQueue {
         this.store.addServiceEvent?.('official', 'operational', 'OFFICIAL_RESPONDED', 'PPO 官网已正常响应查询请求', {});
       }
       this.emit(record);
+      this.notifyTerminal(record);
     } finally {
       this.running = false;
       this.currentId = null;
@@ -294,6 +297,12 @@ export class QueryQueue {
 
   emit(record) {
     this.broadcast(record);
+  }
+
+  notifyTerminal(record) {
+    if (!this.onTerminal) return;
+    try { this.onTerminal(record); }
+    catch (error) { this.logger.error('terminal_hook_failed', { queryId: record?.id, traceId: record?.traceId, error: { message: error.message, stack: error.stack } }); }
   }
 }
 

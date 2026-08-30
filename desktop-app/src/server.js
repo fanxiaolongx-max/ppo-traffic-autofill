@@ -16,6 +16,7 @@ import { isTrustedProxyRequest, resolveClientIp } from './client-ip.js';
 import { decodeFeedbackAttachments, feedbackAttachmentPath, saveFeedbackAttachments } from './feedback-attachments.js';
 import { SecretStore } from './secret-store.js';
 import { SmsNotifier } from './sms-notifier.js';
+import { SmsScheduleRunner } from './sms-scheduler.js';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.logDir, { recursive: true });
@@ -29,6 +30,7 @@ const adminAuth = new AdminAuth({ store, config, logger });
 const geoResolver = new IpGeoResolver({ store, config, logger });
 const clients = new Set();
 let queue;
+let smsScheduler;
 function sendEvent(client, payload) {
   if (client.response.destroyed || client.response.writableEnded) {
     clients.delete(client);
@@ -63,7 +65,12 @@ for (const record of store.list(500, ['success'])) {
 }
 if (repairedResultCount) logger.info('stored_results_reparsed', { repairedCount: repairedResultCount });
 
-queue = new QueryQueue({ store, driver, config, logger, broadcast, onTerminal: record => smsNotifier.handleTerminal(record) });
+queue = new QueryQueue({ store, driver, config, logger, broadcast, onTerminal: record => {
+  smsNotifier.handleTerminal(record);
+  smsScheduler?.handleTerminal(record);
+} });
+smsScheduler = new SmsScheduleRunner({ store, queue, notifier: smsNotifier, config, logger });
+smsScheduler.start();
 const heartbeatTimer = setInterval(() => {
   const now = Date.now();
   for (const client of clients) {
@@ -620,6 +627,30 @@ export const server = http.createServer(async (request, response) => {
       void geoResolver.lookup(ip).then(geo => store.setFeedbackGeo(item.id, geo));
       return json(response, 201, { id: item.id, message: '感谢反馈，我们已收到。' });
     }
+    const smsBinding = url.pathname.match(/^\/api\/v1\/queries\/([^/]+)\/sms-binding$/);
+    const smsBindingVerify = url.pathname.match(/^\/api\/v1\/queries\/([^/]+)\/sms-binding\/verify$/);
+    if (smsBinding && ['GET', 'POST', 'PATCH'].includes(request.method)) {
+      const record = store.getQuery(smsBinding[1]);
+      const privileged = isPrivileged(request);
+      const deviceId = deviceIdentity(request, url, { privileged });
+      if (!record || (!privileged && record.deviceId !== deviceId)) return json(response, 404, { error: { code: 'NOT_FOUND', message: '查询任务不存在' } });
+      if (record.status !== 'success') return json(response, 409, { error: { code: 'SMS_BINDING_QUERY_NOT_SUCCESS', message: '只有查询成功并显示结果后才能配置短信通知' } });
+      const context = { deviceId, sourceIp: clientIp(request) };
+      if (request.method === 'GET') return json(response, 200, smsNotifier.bindingStatus(record, context));
+      const payload = await body(request);
+      if (request.method === 'PATCH') return json(response, 200, smsNotifier.updateBindingSchedule(record, context, payload.intervalHours));
+      const result = smsNotifier.requestBinding(record, context, payload.phone, payload.intervalHours);
+      return json(response, 202, result);
+    }
+    if (request.method === 'POST' && smsBindingVerify) {
+      const record = store.getQuery(smsBindingVerify[1]);
+      const privileged = isPrivileged(request);
+      const deviceId = deviceIdentity(request, url, { privileged });
+      if (!record || (!privileged && record.deviceId !== deviceId)) return json(response, 404, { error: { code: 'NOT_FOUND', message: '查询任务不存在' } });
+      if (record.status !== 'success') return json(response, 409, { error: { code: 'SMS_BINDING_QUERY_NOT_SUCCESS', message: '只有查询成功并显示结果后才能配置短信通知' } });
+      const result = smsNotifier.verifyBinding(record, { deviceId, sourceIp: clientIp(request) }, await body(request));
+      return json(response, 200, result);
+    }
     const queryDiagnostic = url.pathname.match(/^\/api\/v1\/queries\/([^/]+)\/diagnostics\/(before|after)$/);
     if (request.method === 'GET' && queryDiagnostic) {
       const record = store.getQuery(queryDiagnostic[1]);
@@ -747,6 +778,7 @@ export async function shutdownServer(signal) {
   logger.info('server_stopping', { signal });
   store.addServiceEvent('server', 'offline', 'SERVER_STOPPED', '查询服务正在停止', { signal }, { force: true });
   clearInterval(heartbeatTimer);
+  smsScheduler.stop();
   for (const client of clients) client.response.end();
   await new Promise(resolve => server.close(resolve));
   await driver.close();

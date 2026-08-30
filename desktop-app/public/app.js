@@ -288,8 +288,9 @@ async function showDetail(id) {
     <dt>${t('查询尝试')}</dt><dd>${getLanguage() === 'en' ? `${escapeHtml(attempt)} ${Number(attempt) === 1 ? 'attempt' : 'attempts'}` : `${escapeHtml(attempt)} 次`}</dd>
     <dt>${t('失败原因')}</dt><dd>${escapeHtml(item.error ? localizeError(item.error) : '—')}</dd>
     <dt>${t('官网提示')}</dt><dd dir="auto">${escapeHtml(item.error?.officialMessage || '—')}</dd>
-  </dl>${item.diagnostics&&Object.values(item.diagnostics).some(Boolean)?`<section class="query-evidence"><h3>${t('查询现场截图')}</h3><p>${t('截图包含实际提交前表单和 PPO 最终结果或报错页面，仅当前设备可查看。')}</p><div id="query-evidence-grid" class="query-evidence-grid"><span class="muted">${t('正在加载…')}</span></div></section>`:''}<div class="timeline">${item.events.map(event => `<div>${escapeHtml(localizeTimelineStep(steps[event.step] || event.event))}${event.detail ? `<p>${escapeHtml(localizeTimelineDetail(event.detail))}</p>` : ''}<small>${new Date(event.createdAt).toLocaleString(locale)}${event.progress != null ? ` · ${event.progress}%` : ''}${event.attempt ? (getLanguage() === 'en' ? ` · Attempt ${event.attempt}` : ` · 第 ${event.attempt} 次`) : ''}</small></div>`).join('')}</div>`;
+  </dl>${item.status==='success'?`<section id="sms-binding-panel" class="sms-binding-panel"><span class="muted">${t('正在读取短信通知状态…')}</span></section>`:''}${item.diagnostics&&Object.values(item.diagnostics).some(Boolean)?`<section class="query-evidence"><h3>${t('查询现场截图')}</h3><p>${t('截图包含实际提交前表单和 PPO 最终结果或报错页面，仅当前设备可查看。')}</p><div id="query-evidence-grid" class="query-evidence-grid"><span class="muted">${t('正在加载…')}</span></div></section>`:''}<div class="timeline">${item.events.map(event => `<div>${escapeHtml(localizeTimelineStep(steps[event.step] || event.event))}${event.detail ? `<p>${escapeHtml(localizeTimelineDetail(event.detail))}</p>` : ''}<small>${new Date(event.createdAt).toLocaleString(locale)}${event.progress != null ? ` · ${event.progress}%` : ''}${event.attempt ? (getLanguage() === 'en' ? ` · Attempt ${event.attempt}` : ` · 第 ${event.attempt} 次`) : ''}</small></div>`).join('')}</div>`;
   $('#detail-dialog').showModal();
+  if (item.status === 'success') loadSmsBinding(id);
   if (item.diagnostics && Object.values(item.diagnostics).some(Boolean)) {
     const grid = $('#query-evidence-grid'); grid.innerHTML = '';
     const files = [['before','提交前截图'],['after','最终结果或报错截图']].filter(([kind]) => item.diagnostics[kind]);
@@ -302,6 +303,74 @@ async function showDetail(id) {
         grid.insertAdjacentHTML('beforeend', `<p class="form-message">${escapeHtml(error.message)}</p>`);
       }
     }
+  }
+}
+
+function renderSmsBinding(id, binding) {
+  const panel = $('#sms-binding-panel');
+  if (!panel) return;
+  const english = getLanguage() === 'en';
+  if (!binding.available && binding.status !== 'verified') {
+    panel.innerHTML = `<h3>${english?'SMS result notification':'短信结果通知'}</h3><p class="muted">${english?'SMS is not available yet. Ask the administrator to enable it.':'短信服务尚未启用，请联系管理员。'}</p>`;
+    return;
+  }
+  if (binding.status === 'verified') {
+    const hours = Number(binding.intervalHours || 168);
+    const period = hours % 24 === 0 ? (english ? `${hours/24} day${hours===24?'':'s'}` : `${hours/24} 天`) : (english ? `${hours} hours` : `${hours} 小时`);
+    const next = binding.nextRunAt ? new Date(binding.nextRunAt).toLocaleString(english?'en':'zh-CN') : '—';
+    panel.innerHTML = `<h3>${english?'SMS result notification':'短信结果通知'}</h3><div class="sms-binding-success"><strong>✓ ${english?'Verified and enabled':'号码已验证并启用'}</strong><span>${escapeHtml(binding.phoneMasked)}</span></div><p class="muted">${english?`The system will automatically query every ${period} and send the result by SMS. Next run: ${next}.`:`系统已默认开启周期自动查询，将每 ${period} 查询一次并发送短信结果。下次查询：${next}。`}</p><form id="sms-schedule-form" class="sms-schedule-form"><label>${english?'Query interval (hours, minimum 24)':'自动查询周期（小时，最小 24）'}<input id="sms-schedule-hours" type="number" min="24" max="8760" step="1" value="${hours}" required></label><button class="ghost" type="submit">${english?'Save interval':'保存周期'}</button></form><button id="sms-change-phone" class="ghost" type="button">${english?'Change number':'更换手机号'}</button><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
+    $('#sms-schedule-form').addEventListener('submit', event => updateSmsSchedule(event, id));
+    $('#sms-change-phone').addEventListener('click', () => renderSmsBinding(id, { ...binding, status:'unbound' }));
+    return;
+  }
+  if (binding.status === 'pending') {
+    panel.innerHTML = `<h3>${english?'Verify mobile number':'验证手机号'}</h3><p class="muted">${english?`A 6-digit code was sent to ${binding.phoneMasked}. After verification, automatic queries will run every ${binding.intervalHours || 168} hours.`:`6 位验证码已发送至 ${binding.phoneMasked}。验证成功后才会启用，并将默认每 ${binding.intervalHours || 168} 小时自动查询和发送结果。`}</p><form id="sms-code-form" class="sms-code-form"><input id="sms-binding-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="${english?'6-digit code':'6 位验证码'}" required><button class="primary" type="submit">${english?'Verify and enable':'验证并启用'}</button></form><button id="sms-resend-code" class="ghost" type="button">${english?'Resend / change number':'重新发送或更换号码'}</button><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
+    $('#sms-code-form').addEventListener('submit', event => verifySmsBinding(event, id, binding.bindingId));
+    $('#sms-resend-code').addEventListener('click', () => renderSmsBinding(id, { ...binding, status:'unbound' }));
+    return;
+  }
+  panel.innerHTML = `<h3>${english?'SMS result notification':'短信结果通知'}</h3><p class="muted">${english?'Egyptian mobile numbers only. +20 is fixed. Automatic querying defaults to every 7 days; choose another interval below, with a 24-hour minimum.':'仅支持埃及手机号，国家前缀固定为 +20。验证成功后默认每 7 天自动查询一次；可选择其他周期，最短为 24 小时。'}</p><form id="sms-phone-form" class="sms-phone-form"><label class="sms-phone-field"><span>+20</span><input id="sms-binding-phone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="16" placeholder="10XXXXXXXX 或 010XXXXXXXX" required></label><label class="sms-period-field">${english?'Interval (hours)':'周期（小时）'}<input id="sms-binding-interval" type="number" min="24" max="8760" step="1" value="${Number(binding.intervalHours || 168)}" required></label><button class="primary" type="submit">${english?'Send verification code':'发送验证码'}</button></form><p class="sms-binding-policy">${english?'Scheduled work uses the same serial queue and yields while foreground work is queued. Device/IP configuration limits also apply.':'周期任务统一使用现有串行队列，前台已有任务时会主动让路；设备与 IP 配置限额仍然生效。'}</p><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
+  $('#sms-phone-form').addEventListener('submit', event => requestSmsBinding(event, id));
+}
+
+async function loadSmsBinding(id) {
+  try { renderSmsBinding(id, await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`)); }
+  catch (error) { const panel=$('#sms-binding-panel'); if(panel) panel.innerHTML=`<p class="message">${escapeHtml(localizeError(error))}</p>`; }
+}
+
+async function requestSmsBinding(event, id) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  try {
+    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`, { method:'POST', body:JSON.stringify({ phone:$('#sms-binding-phone').value, intervalHours:Number($('#sms-binding-interval').value) }) });
+    renderSmsBinding(id, result);
+  } catch (error) {
+    const message=$('#sms-binding-message'); message.textContent=localizeError(error); message.classList.remove('hidden'); button.disabled=false;
+  }
+}
+
+async function updateSmsSchedule(event, id) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  try {
+    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`, { method:'PATCH', body:JSON.stringify({ intervalHours:Number($('#sms-schedule-hours').value) }) });
+    renderSmsBinding(id, result);
+  } catch (error) {
+    const message=$('#sms-binding-message'); message.textContent=localizeError(error); message.classList.remove('hidden'); button.disabled=false;
+  }
+}
+
+async function verifySmsBinding(event, id, bindingId) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  try {
+    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding/verify`, { method:'POST', body:JSON.stringify({ bindingId, code:$('#sms-binding-code').value }) });
+    renderSmsBinding(id, result);
+  } catch (error) {
+    const message=$('#sms-binding-message'); message.textContent=localizeError(error); message.classList.remove('hidden'); button.disabled=false;
   }
 }
 

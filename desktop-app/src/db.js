@@ -156,6 +156,32 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_sms_deliveries_page ON sms_deliveries(created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_sms_deliveries_status ON sms_deliveries(status, created_at);
+      CREATE TABLE IF NOT EXISTS sms_user_bindings (
+        id TEXT PRIMARY KEY,
+        query_fingerprint TEXT NOT NULL,
+        query_id TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        source_ip TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        code_salt TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        verify_attempts INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT NOT NULL,
+        resend_after TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        verified_at TEXT,
+        interval_hours INTEGER NOT NULL DEFAULT 168,
+        next_run_at TEXT,
+        last_run_at TEXT,
+        last_query_id TEXT,
+        schedule_claimed_until TEXT,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(query_id) REFERENCES queries(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_sms_bindings_query ON sms_user_bindings(query_fingerprint, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sms_bindings_identity ON sms_user_bindings(device_id, source_ip, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sms_bindings_phone ON sms_user_bindings(recipient, verified_at DESC);
       CREATE TABLE IF NOT EXISTS ip_geo_cache (
         ip TEXT PRIMARY KEY,
         geo_json TEXT NOT NULL,
@@ -169,6 +195,15 @@ export class Store {
     const feedbackColumns = new Set(this.db.prepare('PRAGMA table_info(feedback)').all().map(column => column.name));
     if (!feedbackColumns.has('attachments_json')) this.db.exec('ALTER TABLE feedback ADD COLUMN attachments_json TEXT');
     if (!feedbackColumns.has('search_text')) this.db.exec("ALTER TABLE feedback ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");
+    const bindingColumns = new Set(this.db.prepare('PRAGMA table_info(sms_user_bindings)').all().map(column => column.name));
+    if (!bindingColumns.has('interval_hours')) this.db.exec('ALTER TABLE sms_user_bindings ADD COLUMN interval_hours INTEGER NOT NULL DEFAULT 168');
+    if (!bindingColumns.has('next_run_at')) this.db.exec('ALTER TABLE sms_user_bindings ADD COLUMN next_run_at TEXT');
+    if (!bindingColumns.has('last_run_at')) this.db.exec('ALTER TABLE sms_user_bindings ADD COLUMN last_run_at TEXT');
+    if (!bindingColumns.has('last_query_id')) this.db.exec('ALTER TABLE sms_user_bindings ADD COLUMN last_query_id TEXT');
+    if (!bindingColumns.has('schedule_claimed_until')) this.db.exec('ALTER TABLE sms_user_bindings ADD COLUMN schedule_claimed_until TEXT');
+    this.db.prepare("UPDATE sms_user_bindings SET next_run_at=? WHERE status='verified' AND next_run_at IS NULL")
+      .run(new Date(Date.now() + 168 * 3_600_000).toISOString());
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_sms_bindings_due ON sms_user_bindings(status, next_run_at)');
     this.rebuildSearchText();
     this.db.prepare("UPDATE queries SET status='interrupted', step='process_restarted', finished_at=?, updated_at=? WHERE status='running'")
       .run(new Date().toISOString(), new Date().toISOString());
@@ -555,6 +590,126 @@ export class Store {
     return { items: page.map(row => this.mapSmsDelivery(row)), total, hasMore, nextCursor: hasMore && last ? encodeCursor({ type: 'sms', createdAt: last.created_at, id: last.id }) : null };
   }
 
+  createSmsBinding(value) {
+    const now = new Date().toISOString();
+    this.db.prepare("UPDATE sms_user_bindings SET status='superseded', updated_at=? WHERE query_fingerprint=? AND device_id=? AND source_ip=? AND status='pending'")
+      .run(now, value.queryFingerprint, value.deviceId, value.sourceIp);
+    this.db.prepare(`INSERT INTO sms_user_bindings (
+      id, query_fingerprint, query_id, recipient, device_id, source_ip, status,
+      code_salt, code_hash, verify_attempts, expires_at, resend_after, interval_hours, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, ?, ?, ?, ?, ?)`).run(
+      value.id, value.queryFingerprint, value.queryId, value.to, value.deviceId, value.sourceIp,
+      value.codeSalt, value.codeHash, value.expiresAt, value.resendAfter, value.intervalHours, now, now
+    );
+    return this.getSmsBinding(value.id);
+  }
+
+  getSmsBinding(id) {
+    return this.mapSmsBinding(this.db.prepare('SELECT * FROM sms_user_bindings WHERE id=?').get(id));
+  }
+
+  latestSmsBinding(queryFingerprint, deviceId, sourceIp) {
+    return this.mapSmsBinding(this.db.prepare(`SELECT * FROM sms_user_bindings
+      WHERE query_fingerprint=? AND device_id=? AND source_ip=?
+      ORDER BY created_at DESC LIMIT 1`).get(queryFingerprint, deviceId, sourceIp));
+  }
+
+  verifiedSmsBinding(queryFingerprint, recipient = '') {
+    const row = recipient
+      ? this.db.prepare("SELECT * FROM sms_user_bindings WHERE query_fingerprint=? AND recipient=? AND status='verified' ORDER BY verified_at DESC LIMIT 1").get(queryFingerprint, recipient)
+      : this.db.prepare("SELECT * FROM sms_user_bindings WHERE query_fingerprint=? AND status='verified' ORDER BY verified_at DESC LIMIT 1").get(queryFingerprint);
+    return this.mapSmsBinding(row);
+  }
+
+  verifiedSmsBindingForDevice(queryFingerprint, deviceId, recipient = '') {
+    const row = recipient
+      ? this.db.prepare("SELECT * FROM sms_user_bindings WHERE query_fingerprint=? AND device_id=? AND recipient=? AND status='verified' ORDER BY verified_at DESC LIMIT 1").get(queryFingerprint, deviceId, recipient)
+      : this.db.prepare("SELECT * FROM sms_user_bindings WHERE query_fingerprint=? AND device_id=? AND status='verified' ORDER BY verified_at DESC LIMIT 1").get(queryFingerprint, deviceId);
+    return this.mapSmsBinding(row);
+  }
+
+  listVerifiedSmsBindings(queryFingerprint) {
+    return this.db.prepare(`SELECT * FROM sms_user_bindings WHERE query_fingerprint=? AND status='verified'
+      GROUP BY recipient ORDER BY verified_at DESC`).all(queryFingerprint).map(row => this.mapSmsBinding(row));
+  }
+
+  smsBindingUsage({ deviceId, sourceIp, recipient, sinceIso }) {
+    const identity = this.db.prepare(`SELECT COUNT(*) AS requests, COUNT(DISTINCT recipient) AS phones
+      FROM sms_user_bindings WHERE device_id=? AND source_ip=? AND created_at>=?`).get(deviceId, sourceIp, sinceIso);
+    const phone = this.db.prepare(`SELECT COUNT(DISTINCT query_fingerprint) AS queries FROM sms_user_bindings
+      WHERE recipient=? AND status='verified' AND verified_at>=?`).get(recipient, sinceIso);
+    const phoneSeen = this.db.prepare(`SELECT 1 AS seen FROM sms_user_bindings
+      WHERE device_id=? AND source_ip=? AND recipient=? AND created_at>=? LIMIT 1`).get(deviceId, sourceIp, recipient, sinceIso);
+    return { requests: Number(identity?.requests || 0), phones: Number(identity?.phones || 0), queries: Number(phone?.queries || 0), phoneSeen: Boolean(phoneSeen) };
+  }
+
+  recordSmsBindingFailure(id) {
+    this.db.prepare('UPDATE sms_user_bindings SET verify_attempts=verify_attempts+1, updated_at=? WHERE id=?')
+      .run(new Date().toISOString(), id);
+    return this.getSmsBinding(id);
+  }
+
+  verifySmsBinding(id) {
+    const binding = this.getSmsBinding(id);
+    if (!binding) return null;
+    const now = new Date().toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare("UPDATE sms_user_bindings SET status='replaced', updated_at=? WHERE query_fingerprint=? AND device_id=? AND status='verified' AND id<>?")
+        .run(now, binding.queryFingerprint, binding.deviceId, id);
+      const nextRunAt = new Date(Date.now() + binding.intervalHours * 3_600_000).toISOString();
+      this.db.prepare("UPDATE sms_user_bindings SET status='verified', code_salt='', code_hash='', verified_at=?, next_run_at=?, schedule_claimed_until=NULL, updated_at=? WHERE id=?")
+        .run(now, nextRunAt, now, id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return this.getSmsBinding(id);
+  }
+
+  updateSmsBindingSchedule(id, intervalHours) {
+    const now = new Date().toISOString();
+    const nextRunAt = new Date(Date.now() + intervalHours * 3_600_000).toISOString();
+    this.db.prepare("UPDATE sms_user_bindings SET interval_hours=?, next_run_at=?, schedule_claimed_until=NULL, updated_at=? WHERE id=? AND status='verified'")
+      .run(intervalHours, nextRunAt, now, id);
+    return this.getSmsBinding(id);
+  }
+
+  claimDueSmsSchedule(nowIso, claimedUntilIso) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(`SELECT * FROM sms_user_bindings
+        WHERE status='verified' AND next_run_at IS NOT NULL AND next_run_at<=?
+        AND (schedule_claimed_until IS NULL OR schedule_claimed_until<=?)
+        ORDER BY next_run_at, id LIMIT 1`).get(nowIso, nowIso);
+      if (!row) { this.db.exec('COMMIT'); return null; }
+      this.db.prepare('UPDATE sms_user_bindings SET schedule_claimed_until=?, updated_at=? WHERE id=?')
+        .run(claimedUntilIso, nowIso, row.id);
+      this.db.exec('COMMIT');
+      return this.getSmsBinding(row.id);
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  completeSmsSchedule(id, { queryId, nextRunAt, runAt }) {
+    this.db.prepare(`UPDATE sms_user_bindings SET last_query_id=?, last_run_at=?, next_run_at=?,
+      schedule_claimed_until=NULL, updated_at=? WHERE id=?`).run(queryId, runAt, nextRunAt, runAt, id);
+    return this.getSmsBinding(id);
+  }
+
+  deferSmsSchedule(id, nextRunAt) {
+    this.db.prepare('UPDATE sms_user_bindings SET next_run_at=?, schedule_claimed_until=NULL, updated_at=? WHERE id=?')
+      .run(nextRunAt, new Date().toISOString(), id);
+    return this.getSmsBinding(id);
+  }
+
+  smsBindingByLastQueryId(queryId) {
+    return this.mapSmsBinding(this.db.prepare("SELECT * FROM sms_user_bindings WHERE last_query_id=? AND status='verified' ORDER BY updated_at DESC LIMIT 1").get(queryId));
+  }
+
   close() {
     this.db.close();
   }
@@ -623,6 +778,20 @@ export class Store {
       idempotencyKey: row.idempotency_key, apiUrl: row.api_url, status: row.status,
       attempts: Number(row.attempts || 0), providerMessageId: row.provider_message_id || '',
       providerStatus: row.provider_status || '', error: row.error || '', createdAt: row.created_at, updatedAt: row.updated_at
+    };
+  }
+
+  mapSmsBinding(row) {
+    if (!row) return null;
+    return {
+      id: row.id, queryFingerprint: row.query_fingerprint, queryId: row.query_id,
+      to: row.recipient, deviceId: row.device_id, sourceIp: row.source_ip, status: row.status,
+      codeSalt: row.code_salt, codeHash: row.code_hash, verifyAttempts: Number(row.verify_attempts || 0),
+      expiresAt: row.expires_at, resendAfter: row.resend_after, createdAt: row.created_at,
+      verifiedAt: row.verified_at || null, intervalHours: Number(row.interval_hours || 168),
+      nextRunAt: row.next_run_at || null, lastRunAt: row.last_run_at || null,
+      lastQueryId: row.last_query_id || null, scheduleClaimedUntil: row.schedule_claimed_until || null,
+      updatedAt: row.updated_at
     };
   }
 }

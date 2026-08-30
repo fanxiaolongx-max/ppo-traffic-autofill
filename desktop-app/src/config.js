@@ -69,5 +69,17 @@ export const config = Object.freeze({
   smsApiUrl: process.env.SMS_API_URL || 'https://app.fanxiaolong.uk/api/v1/sms/messages',
   smsApiToken: process.env.SMS_API_TOKEN || '',
   smsTimeoutMs: integer('PPO_SMS_TIMEOUT_MS', 8_000, 1_000),
-  smsMaxAttempts: integer('PPO_SMS_MAX_ATTEMPTS', 2, 1)
+  smsMaxAttempts: integer('PPO_SMS_MAX_ATTEMPTS', 2, 1),
+  smsBindingCodeTtlMs: integer('PPO_SMS_BINDING_CODE_TTL_MS', 10 * 60_000, 60_000),
+  smsBindingResendMs: integer('PPO_SMS_BINDING_RESEND_MS', 60_000, 10_000),
+  smsBindingVerifyAttempts: integer('PPO_SMS_BINDING_VERIFY_ATTEMPTS', 5, 1),
+  smsBindingWindowMs: integer('PPO_SMS_BINDING_WINDOW_MS', 24 * 60 * 60_000, 60_000),
+  smsBindingRequestsPerDeviceIp: integer('PPO_SMS_BINDING_REQUESTS_PER_DEVICE_IP', 6, 1),
+  smsBindingPhonesPerDeviceIp: integer('PPO_SMS_BINDING_PHONES_PER_DEVICE_IP', 3, 1),
+  smsBindingQueriesPerPhone: integer('PPO_SMS_BINDING_QUERIES_PER_PHONE', 5, 1),
+  smsScheduleDefaultHours: integer('PPO_SMS_SCHEDULE_DEFAULT_HOURS', 168, 24),
+  smsScheduleMaxHours: integer('PPO_SMS_SCHEDULE_MAX_HOURS', 8_760, 24),
+  smsSchedulePollMs: integer('PPO_SMS_SCHEDULE_POLL_MS', 30_000, 5_000),
+  smsScheduleLeaseMs: integer('PPO_SMS_SCHEDULE_LEASE_MS', 15 * 60_000, 60_000),
+  smsScheduleRetryMs: integer('PPO_SMS_SCHEDULE_RETRY_MS', 15 * 60_000, 60_000)
 });

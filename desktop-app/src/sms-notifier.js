@@ -10,6 +10,34 @@ export function normalizeSmsMatch(type, value) {
   return `${compact.replace(/[0-9]/g, '')}${compact.replace(/[^0-9]/g, '')}`;
 }
 
+export function normalizeEgyptMobile(value) {
+  let digits = String(value || '').replace(/[٠-٩]/g, digit => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit))).replace(/[^0-9+]/g, '');
+  if (digits.startsWith('+20')) digits = digits.slice(3);
+  else if (digits.startsWith('20') && digits.length === 12) digits = digits.slice(2);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+  if (!/^1[0125][0-9]{8}$/.test(digits)) {
+    throw Object.assign(new Error('请输入有效的埃及手机号（010、011、012 或 015 开头）'), { code: 'INVALID_EGYPT_MOBILE', statusCode: 422 });
+  }
+  return `+20${digits}`;
+}
+
+function maskedPhone(value) {
+  const text = String(value || '');
+  return text.length > 7 ? `${text.slice(0, 5)}****${text.slice(-3)}` : '****';
+}
+
+function bindingError(code, message, statusCode = 422, retryAfterMs = 0) {
+  return Object.assign(new Error(message), { code, statusCode, ...(retryAfterMs ? { retryAfterMs } : {}) });
+}
+
+function scheduleHours(value, config) {
+  const hours = value == null || value === '' ? config.smsScheduleDefaultHours : Number(value);
+  if (!Number.isInteger(hours) || hours < 24 || hours > config.smsScheduleMaxHours) {
+    throw bindingError('INVALID_SMS_SCHEDULE_INTERVAL', `自动查询周期应为 24～${config.smsScheduleMaxHours} 小时的整数`, 422);
+  }
+  return hours;
+}
+
 function validateUrl(value) {
   const url = new URL(value);
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname))) {
@@ -106,6 +134,118 @@ export class SmsNotifier {
     return this.getConfig();
   }
 
+  bindingStatus(record, { deviceId, sourceIp }) {
+    const settings = this.getConfig();
+    let binding = this.store.latestSmsBinding(record.fingerprint, deviceId, sourceIp);
+    if (!binding || (binding.status !== 'verified' && !(binding.status === 'pending' && new Date(binding.expiresAt).getTime() > Date.now()))) {
+      binding = this.store.verifiedSmsBindingForDevice(record.fingerprint, deviceId);
+    }
+    const usable = binding && (binding.status === 'verified' || (binding.status === 'pending' && new Date(binding.expiresAt).getTime() > Date.now()));
+    return {
+      available: settings.enabled && settings.tokenConfigured,
+      status: usable ? binding.status : 'unbound',
+      bindingId: usable && binding.status === 'pending' ? binding.id : null,
+      phoneMasked: usable ? maskedPhone(binding.to) : '',
+      expiresAt: usable && binding.status === 'pending' ? binding.expiresAt : null,
+      resendAfter: usable && binding.status === 'pending' ? binding.resendAfter : null,
+      intervalHours: usable ? binding.intervalHours : this.config.smsScheduleDefaultHours,
+      nextRunAt: usable && binding.status === 'verified' ? binding.nextRunAt : null,
+      lastRunAt: usable && binding.status === 'verified' ? binding.lastRunAt : null,
+      countryCode: '+20'
+    };
+  }
+
+  requestBinding(record, { deviceId, sourceIp }, phoneInput, intervalInput = null) {
+    const settings = this.getConfig();
+    if (!settings.enabled || !settings.tokenConfigured) throw bindingError('SMS_NOT_CONFIGURED', '短信服务尚未启用，请联系管理员', 503);
+    const to = normalizeEgyptMobile(phoneInput);
+    const intervalHours = scheduleHours(intervalInput, this.config);
+    const already = this.store.verifiedSmsBindingForDevice(record.fingerprint, deviceId, to);
+    if (already) {
+      this.store.updateSmsBindingSchedule(already.id, intervalHours);
+      return { ...this.bindingStatus(record, { deviceId, sourceIp }), status: 'verified', phoneMasked: maskedPhone(to), alreadyVerified: true };
+    }
+    const latest = this.store.latestSmsBinding(record.fingerprint, deviceId, sourceIp);
+    const resendAt = latest?.status === 'pending' ? new Date(latest.resendAfter).getTime() : 0;
+    if (resendAt > Date.now()) throw bindingError('SMS_CODE_COOLDOWN', '验证码已发送，请稍后再试', 429, resendAt - Date.now());
+
+    const sinceIso = new Date(Date.now() - this.config.smsBindingWindowMs).toISOString();
+    const usage = this.store.smsBindingUsage({ deviceId, sourceIp, recipient: to, sinceIso });
+    if (usage.requests >= this.config.smsBindingRequestsPerDeviceIp) throw bindingError('SMS_BINDING_REQUEST_LIMIT', '此设备和网络的手机号配置次数已达周期上限', 429, this.config.smsBindingWindowMs);
+    if (!usage.phoneSeen && usage.phones >= this.config.smsBindingPhonesPerDeviceIp) throw bindingError('SMS_BINDING_PHONE_LIMIT', '此设备和网络可配置的不同手机号已达周期上限', 429, this.config.smsBindingWindowMs);
+    if (usage.queries >= this.config.smsBindingQueriesPerPhone) throw bindingError('SMS_BINDING_QUERY_LIMIT', '此手机号可绑定的查询条件已达周期上限', 429, this.config.smsBindingWindowMs);
+
+    const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+    const salt = crypto.randomBytes(16).toString('base64url');
+    const codeHash = crypto.scryptSync(code, salt, 32).toString('base64url');
+    const id = `smsb_${crypto.randomUUID()}`;
+    const binding = this.store.createSmsBinding({
+      id, queryFingerprint: record.fingerprint, queryId: record.id, to, deviceId, sourceIp,
+      codeSalt: salt, codeHash,
+      intervalHours,
+      expiresAt: new Date(Date.now() + this.config.smsBindingCodeTtlMs).toISOString(),
+      resendAfter: new Date(Date.now() + this.config.smsBindingResendMs).toISOString()
+    });
+    this.queueMessage(record, {
+      ruleId: `verify_${id}`, matchType: 'verification', matchValue: id, to,
+      text: `埃及车辆违章查询验证码：${code}。${Math.ceil(this.config.smsBindingCodeTtlMs / 60_000)} 分钟内有效，请勿告知他人。`
+    });
+    this.logger.info('sms_binding_code_queued', { queryId: record.id, traceId: record.traceId, bindingId: id, deviceId, sourceIp, toMasked: maskedPhone(to) });
+    return { ...this.bindingStatus(record, { deviceId, sourceIp }), status: 'pending', bindingId: binding.id, phoneMasked: maskedPhone(to), expiresAt: binding.expiresAt, resendAfter: binding.resendAfter };
+  }
+
+  verifyBinding(record, { deviceId, sourceIp }, { bindingId, code }) {
+    const binding = this.store.getSmsBinding(String(bindingId || ''));
+    if (!binding || binding.queryFingerprint !== record.fingerprint || binding.deviceId !== deviceId || binding.sourceIp !== sourceIp) {
+      throw bindingError('SMS_BINDING_NOT_FOUND', '验证码配置不存在或不属于当前设备', 404);
+    }
+    if (binding.status === 'verified') return this.bindingStatus(record, { deviceId, sourceIp });
+    if (binding.status !== 'pending' || new Date(binding.expiresAt).getTime() <= Date.now()) throw bindingError('SMS_CODE_EXPIRED', '验证码已过期，请重新发送', 422);
+    if (binding.verifyAttempts >= this.config.smsBindingVerifyAttempts) throw bindingError('SMS_CODE_ATTEMPTS_EXCEEDED', '验证码错误次数过多，请重新发送', 429);
+    const supplied = String(code || '').trim();
+    const expectedHash = Buffer.from(binding.codeHash, 'base64url');
+    const suppliedHash = Buffer.from(crypto.scryptSync(supplied, binding.codeSalt, 32));
+    if (!/^[0-9]{6}$/.test(supplied) || suppliedHash.length !== expectedHash.length || !crypto.timingSafeEqual(suppliedHash, expectedHash)) {
+      const failed = this.store.recordSmsBindingFailure(binding.id);
+      const remaining = Math.max(0, this.config.smsBindingVerifyAttempts - failed.verifyAttempts);
+      throw bindingError('SMS_CODE_INVALID', `验证码不正确，还可尝试 ${remaining} 次`, 422);
+    }
+    const verified = this.store.verifySmsBinding(binding.id);
+    this.queueBindingResult(record, verified);
+    this.logger.info('sms_binding_verified', { queryId: record.id, traceId: record.traceId, bindingId: binding.id, deviceId, sourceIp, toMasked: maskedPhone(binding.to) });
+    return { ...this.bindingStatus(record, { deviceId, sourceIp }), status: 'verified', phoneMasked: maskedPhone(binding.to) };
+  }
+
+  updateBindingSchedule(record, { deviceId, sourceIp }, intervalInput) {
+    const intervalHours = scheduleHours(intervalInput, this.config);
+    let binding = this.store.latestSmsBinding(record.fingerprint, deviceId, sourceIp);
+    if (!binding || binding.status !== 'verified') binding = this.store.verifiedSmsBindingForDevice(record.fingerprint, deviceId);
+    if (!binding || binding.status !== 'verified') throw bindingError('SMS_BINDING_NOT_FOUND', '当前查询尚未完成手机号验证', 404);
+    this.store.updateSmsBindingSchedule(binding.id, intervalHours);
+    this.logger.info('sms_binding_schedule_updated', {
+      queryId: record.id, traceId: record.traceId, bindingId: binding.id,
+      deviceId, sourceIp, intervalHours, toMasked: maskedPhone(binding.to)
+    });
+    return this.bindingStatus(record, { deviceId, sourceIp });
+  }
+
+  queueMessage(record, { ruleId, matchType, matchValue, to, text }) {
+    const settings = this.getConfig();
+    const delivery = this.store.createSmsDelivery({
+      id: `smsd_${crypto.randomUUID()}`, queryId: record.id, traceId: record.traceId, ruleId,
+      matchType, matchValue, to, text, idempotencyKey: `ppo-${record.id}-${ruleId}`, apiUrl: settings.apiUrl
+    });
+    if (delivery) this.drain();
+    return delivery;
+  }
+
+  queueBindingResult(record, binding) {
+    return this.queueMessage(record, {
+      ruleId: `userbind_${binding.id}`, matchType: 'query', matchValue: record.fingerprint,
+      to: binding.to, text: defaultMessage(record)
+    });
+  }
+
   handleTerminal(record) {
     if (!['success', 'failed'].includes(record?.status)) return 0;
     const settings = this.getConfig();
@@ -118,6 +258,11 @@ export class SmsNotifier {
         idempotencyKey: `ppo-${record.id}-${rule.id}`, apiUrl: settings.apiUrl
       });
       if (delivery) created += 1;
+    }
+    if (record.status === 'success') {
+      for (const binding of this.store.listVerifiedSmsBindings(record.fingerprint)) {
+        if (this.queueBindingResult(record, binding)) created += 1;
+      }
     }
     if (created) {
       this.logger.info('sms_notifications_queued', { queryId: record.id, traceId: record.traceId, count: created });
@@ -133,7 +278,12 @@ export class SmsNotifier {
     try {
       let delivery;
       while ((delivery = this.store.nextSmsDelivery())) await this.send(delivery);
-    } finally { this.running = false; }
+    } finally {
+      this.running = false;
+      // A delivery can be queued after the loop's final read while another send
+      // is still unwinding. Recheck on the next microtask so it is not stranded.
+      if (this.store.nextSmsDelivery()) queueMicrotask(() => this.drain());
+    }
   }
 
   async send(delivery) {

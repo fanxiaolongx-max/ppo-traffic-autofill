@@ -167,9 +167,10 @@ async function refresh() {
 function renderServiceBadge(serviceStatus) {
   const badge = $('#service-badge');
   const official = serviceStatus?.official?.status;
-  const level = official === 'outage' ? 'offline' : (official === 'degraded' || official === 'unknown' ? 'warning' : 'online');
+  const sms = serviceStatus?.sms?.status;
+  const level = official === 'outage' ? 'offline' : (official === 'degraded' || official === 'unknown' || sms === 'outage' ? 'warning' : 'online');
   badge.className = `service-badge ${level}`;
-  badge.querySelector('span').textContent = t(official === 'outage' ? '官网故障' : official === 'degraded' ? '官网波动' : official === 'unknown' ? '状态待确认' : '服务正常');
+  badge.querySelector('span').textContent = t(official === 'outage' ? '官网故障' : official === 'degraded' ? '官网波动' : official === 'unknown' ? '状态待确认' : sms === 'outage' ? '短信服务异常' : '服务正常');
 }
 
 function render() {
@@ -226,10 +227,11 @@ function statusLabel(status) {
 
 function renderStatus(data) {
   const successRate = data.queries24h.successRate == null ? (getLanguage()==='en'?'No samples':'暂无样本') : `${data.queries24h.successRate}%`;
-  const componentName = { server: t('本程序服务'), official: t('PPO 官网'), queue: t('队列') };
+  const componentName = { server: t('本程序服务'), official: t('PPO 官网'), queue: t('队列'), sms: t('短信通知服务') };
   $('#status-content').innerHTML = `<div class="status-components">
     <article><i class="${escapeHtml(data.server.status)}"></i><span><strong>${t('本程序服务')}</strong><small>${statusLabel(data.server.status)} · ${getLanguage()==='en'?`Up ${Math.floor(data.server.uptimeSeconds/60)} min`:`已运行 ${Math.floor(data.server.uptimeSeconds / 60)} 分钟`}</small></span></article>
     <article><i class="${escapeHtml(data.official.status)}"></i><span><strong>${t('PPO 官网')}</strong><small>${statusLabel(data.official.status)} · ${escapeHtml(t(data.official.message))}</small></span></article>
+    <article><i class="${escapeHtml(data.sms?.status||'unknown')}"></i><span><strong>${t('短信通知服务')}</strong><small>${statusLabel(data.sms?.status||'unknown')} · ${escapeHtml(t(data.sms?.message||'等待检测'))}${data.sms?.lastCheckedAt?` · ${escapeHtml(new Date(data.sms.lastCheckedAt).toLocaleString(getLanguage()==='en'?'en':'zh-CN'))}`:''}</small></span></article>
   </div>
   <div class="status-metrics">
     <div><span>${t('24 小时查询成功率')}</span><strong>${successRate}</strong><small>${getLanguage()==='en'?`${data.queries24h.success} success / ${data.queries24h.failed} failed`:`${data.queries24h.success} 成功 / ${data.queries24h.failed} 失败`}</small></div>
@@ -306,30 +308,40 @@ async function showDetail(id) {
   }
 }
 
+function smsIntervalDays(binding) {
+  return Math.max(1, Math.round(Number(binding?.intervalHours || 168) / 24));
+}
+
+function smsBindingHeader(english, description) {
+  return `<div class="sms-binding-head"><span class="sms-binding-icon" aria-hidden="true">✦</span><div><h3>${english?'SMS result notification':'短信结果通知'}</h3><p>${description}</p></div></div>`;
+}
+
 function renderSmsBinding(id, binding) {
   const panel = $('#sms-binding-panel');
   if (!panel) return;
   const english = getLanguage() === 'en';
   if (!binding.available && binding.status !== 'verified') {
-    panel.innerHTML = `<h3>${english?'SMS result notification':'短信结果通知'}</h3><p class="muted">${english?'SMS is not available yet. Ask the administrator to enable it.':'短信服务尚未启用，请联系管理员。'}</p>`;
+    panel.innerHTML = smsBindingHeader(english, english?'SMS is not available yet. Ask the administrator to enable it.':'短信服务尚未启用，请联系管理员。');
     return;
   }
   if (binding.status === 'verified') {
-    const hours = Number(binding.intervalHours || 168);
-    const period = hours % 24 === 0 ? (english ? `${hours/24} day${hours===24?'':'s'}` : `${hours/24} 天`) : (english ? `${hours} hours` : `${hours} 小时`);
+    const days = smsIntervalDays(binding);
+    const period = english ? `${days} day${days===1?'':'s'}` : `${days} 天`;
     const next = binding.nextRunAt ? new Date(binding.nextRunAt).toLocaleString(english?'en':'zh-CN') : '—';
-    panel.innerHTML = `<h3>${english?'SMS result notification':'短信结果通知'}</h3><div class="sms-binding-success"><strong>✓ ${english?'Verified and enabled':'号码已验证并启用'}</strong><span>${escapeHtml(binding.phoneMasked)}</span></div><p class="muted">${english?`The system will automatically query every ${period} and send the result by SMS. Next run: ${next}.`:`系统已默认开启周期自动查询，将每 ${period} 查询一次并发送短信结果。下次查询：${next}。`}</p><form id="sms-schedule-form" class="sms-schedule-form"><label>${english?'Query interval (hours, minimum 24)':'自动查询周期（小时，最小 24）'}<input id="sms-schedule-hours" type="number" min="24" max="8760" step="1" value="${hours}" required></label><button class="ghost" type="submit">${english?'Save interval':'保存周期'}</button></form><button id="sms-change-phone" class="ghost" type="button">${english?'Change number':'更换手机号'}</button><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
+    panel.innerHTML = `${smsBindingHeader(english, english?'Verified number and automatic query schedule':'已验证号码与自动查询计划')}<div class="sms-binding-success"><strong><i>✓</i>${english?'Verified and enabled':'号码已验证并启用'}</strong><span>${escapeHtml(binding.phoneMasked)}</span></div><div class="sms-schedule-summary"><span>${english?'Automatic query':'自动查询'}<strong>${english?`Every ${period}`:`每 ${period}`}</strong></span><span>${english?'Next run':'下次执行'}<strong>${escapeHtml(next)}</strong></span></div><form id="sms-schedule-form" class="sms-schedule-form"><label><span>${english?'Query interval':'自动查询周期'}</span><span class="sms-number-input"><input id="sms-schedule-days" type="number" min="1" max="365" step="1" value="${days}" required><b>${english?'days':'天'}</b></span></label><button class="ghost" type="submit">${english?'Save interval':'保存周期'}</button></form><div class="sms-binding-actions"><button id="sms-change-phone" class="ghost" type="button">${english?'Change number':'更换手机号'}</button></div><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
     $('#sms-schedule-form').addEventListener('submit', event => updateSmsSchedule(event, id));
     $('#sms-change-phone').addEventListener('click', () => renderSmsBinding(id, { ...binding, status:'unbound' }));
     return;
   }
   if (binding.status === 'pending') {
-    panel.innerHTML = `<h3>${english?'Verify mobile number':'验证手机号'}</h3><p class="muted">${english?`A 6-digit code was sent to ${binding.phoneMasked}. After verification, automatic queries will run every ${binding.intervalHours || 168} hours.`:`6 位验证码已发送至 ${binding.phoneMasked}。验证成功后才会启用，并将默认每 ${binding.intervalHours || 168} 小时自动查询和发送结果。`}</p><form id="sms-code-form" class="sms-code-form"><input id="sms-binding-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="${english?'6-digit code':'6 位验证码'}" required><button class="primary" type="submit">${english?'Verify and enable':'验证并启用'}</button></form><button id="sms-resend-code" class="ghost" type="button">${english?'Resend / change number':'重新发送或更换号码'}</button><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
+    const days = smsIntervalDays(binding);
+    panel.innerHTML = `${smsBindingHeader(english, english?`Code sent to ${binding.phoneMasked}`:`验证码已发送至 ${binding.phoneMasked}`)}<div class="sms-binding-notice">${english?`Verification enables an automatic query every ${days} day${days===1?'':'s'}.`:`验证成功后，将每 ${days} 天自动查询并发送结果。`}</div><form id="sms-code-form" class="sms-code-form"><input id="sms-binding-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="${english?'6-digit code':'输入 6 位验证码'}" required><button class="primary" type="submit">${english?'Verify and enable':'验证并启用'}</button></form><button id="sms-resend-code" class="ghost sms-secondary-action" type="button">${english?'Resend / change number':'重新发送或更换号码'}</button><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
     $('#sms-code-form').addEventListener('submit', event => verifySmsBinding(event, id, binding.bindingId));
     $('#sms-resend-code').addEventListener('click', () => renderSmsBinding(id, { ...binding, status:'unbound' }));
     return;
   }
-  panel.innerHTML = `<h3>${english?'SMS result notification':'短信结果通知'}</h3><p class="muted">${english?'Egyptian mobile numbers only. +20 is fixed. Automatic querying defaults to every 7 days; choose another interval below, with a 24-hour minimum.':'仅支持埃及手机号，国家前缀固定为 +20。验证成功后默认每 7 天自动查询一次；可选择其他周期，最短为 24 小时。'}</p><form id="sms-phone-form" class="sms-phone-form"><label class="sms-phone-field"><span>+20</span><input id="sms-binding-phone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="16" placeholder="10XXXXXXXX 或 010XXXXXXXX" required></label><label class="sms-period-field">${english?'Interval (hours)':'周期（小时）'}<input id="sms-binding-interval" type="number" min="24" max="8760" step="1" value="${Number(binding.intervalHours || 168)}" required></label><button class="primary" type="submit">${english?'Send verification code':'发送验证码'}</button></form><p class="sms-binding-policy">${english?'Scheduled work uses the same serial queue and yields while foreground work is queued. Device/IP configuration limits also apply.':'周期任务统一使用现有串行队列，前台已有任务时会主动让路；设备与 IP 配置限额仍然生效。'}</p><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
+  const days = smsIntervalDays(binding);
+  panel.innerHTML = `${smsBindingHeader(english, english?'Verify an Egyptian mobile number to receive results automatically.':'验证埃及手机号后，系统将按周期自动查询并发送结果。')}<form id="sms-phone-form" class="sms-phone-form"><label class="sms-form-field"><span>${english?'Mobile number':'埃及手机号'}</span><span class="sms-phone-field"><b>+20</b><input id="sms-binding-phone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="16" placeholder="10XXXXXXXX 或 010XXXXXXXX" required></span></label><label class="sms-form-field sms-period-field"><span>${english?'Query interval':'查询周期'}</span><span class="sms-number-input"><input id="sms-binding-days" type="number" min="1" max="365" step="1" value="${days}" required><b>${english?'days':'天'}</b></span></label><button class="primary" type="submit">${english?'Send code':'发送验证码'}</button></form><p class="sms-binding-policy">${english?'Defaults to 7 days; minimum 1 day. Scheduled queries share the foreground queue and never run concurrently.':'默认 7 天，最短 1 天。周期查询与前台共用同一队列，不会并发执行。'}</p><p id="sms-binding-message" class="message hidden" role="alert"></p>`;
   $('#sms-phone-form').addEventListener('submit', event => requestSmsBinding(event, id));
 }
 
@@ -343,7 +355,7 @@ async function requestSmsBinding(event, id) {
   const button = event.currentTarget.querySelector('button');
   button.disabled = true;
   try {
-    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`, { method:'POST', body:JSON.stringify({ phone:$('#sms-binding-phone').value, intervalHours:Number($('#sms-binding-interval').value) }) });
+    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`, { method:'POST', body:JSON.stringify({ phone:$('#sms-binding-phone').value, intervalHours:Number($('#sms-binding-days').value) * 24 }) });
     renderSmsBinding(id, result);
   } catch (error) {
     const message=$('#sms-binding-message'); message.textContent=localizeError(error); message.classList.remove('hidden'); button.disabled=false;
@@ -355,7 +367,7 @@ async function updateSmsSchedule(event, id) {
   const button = event.currentTarget.querySelector('button');
   button.disabled = true;
   try {
-    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`, { method:'PATCH', body:JSON.stringify({ intervalHours:Number($('#sms-schedule-hours').value) }) });
+    const result = await api(`/api/v1/queries/${encodeURIComponent(id)}/sms-binding`, { method:'PATCH', body:JSON.stringify({ intervalHours:Number($('#sms-schedule-days').value) * 24 }) });
     renderSmsBinding(id, result);
   } catch (error) {
     const message=$('#sms-binding-message'); message.textContent=localizeError(error); message.classList.remove('hidden'); button.disabled=false;

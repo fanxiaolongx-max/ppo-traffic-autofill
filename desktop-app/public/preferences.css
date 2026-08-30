@@ -20,12 +20,18 @@
 :root[data-theme="light"] dialog::backdrop { background:rgba(38,50,65,.48); }
 :root[data-theme="light"] .queue-notice { color:#79520b; }
 :root[data-theme="light"] .admin-warning { color:#835d12; }
+:root[data-theme="light"] .sms-health,:root[data-theme="light"] .sms-admin-phone,:root[data-theme="light"] .sms-binding-create label { background:#f7f9fc; }
+:root[data-theme="light"] .binding-status,:root[data-theme="light"] .binding-phone,:root[data-theme="light"] .binding-days input { background:#fff; }
 :root[data-theme="light"] input::placeholder,:root[data-theme="light"] textarea::placeholder { color:#738194; opacity:1; }
 :root[data-theme="light"] .timeline p,:root[data-theme="light"] .feedback-dialog label { color:#405064; }
 :root[data-theme="light"] .letter-slot small { color:#657487; }
 :root[data-theme="light"] .progress { background:#dde5ed; }
 :root[data-theme="light"] .letter-palette { border-color:#b9c6d4; }
 :root[data-theme="light"] .message,:root[data-theme="light"] .form-message { color:#932934; background:#fff0f1; border-color:#e7aeb4; }
+:root[data-theme="light"] .sms-binding-panel { background:#f8fafc; border-color:#d5dee8; box-shadow:0 8px 22px rgba(35,55,78,.06); }
+:root[data-theme="light"] .sms-phone-field,:root[data-theme="light"] .sms-number-input,:root[data-theme="light"] .sms-code-form input,:root[data-theme="light"] .sms-schedule-summary span { background:#fff; }
+:root[data-theme="light"] .sms-phone-field b { background:#fff8e8; }
+:root[data-theme="light"] .sms-phone-field input,:root[data-theme="light"] .sms-number-input input { background:transparent; }
 :root[data-theme="light"] .cell-action button,:root[data-theme="light"] .search-value,:root[data-theme="light"] .load-more { background:#edf2f7; color:#334458; }
 :root[data-theme="light"] .cell-action button:hover,:root[data-theme="light"] .search-value:hover,:root[data-theme="light"] .load-more:hover { color:#714d06; border-color:#b79c64; }
 :root[data-theme="light"] .level.info { color:#086543; background:#dff4e9; }

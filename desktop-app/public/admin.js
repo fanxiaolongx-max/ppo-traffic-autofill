@@ -5,14 +5,14 @@ const hashToken = new URLSearchParams(location.hash.slice(1)).get('desktopToken'
 if (hashToken) sessionStorage.setItem('ppo-desktop-token', hashToken);
 const token = hashToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashToken) history.replaceState(null, '', '/admin');
-const state = { auth:null, csrfToken:'', overview:null, queries:[], queryCursor:'', feedback:[], feedbackCursor:'', logs:[], logCursor:'', serviceEvents:[], serviceCursor:'', smsRules:[], smsDeliveries:[], smsDeliveryCursor:'', attachmentUrls:[], diagnosticUrls:[] };
+const state = { auth:null, csrfToken:'', overview:null, queries:[], queryCursor:'', feedback:[], feedbackCursor:'', logs:[], logCursor:'', serviceEvents:[], serviceCursor:'', smsRules:[], smsDeliveries:[], smsDeliveryCursor:'', smsBindings:[], smsBindingCursor:'', attachmentUrls:[], diagnosticUrls:[] };
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char]); }
 function formatTime(value) { return value ? new Date(value).toLocaleString(getLanguage()==='en'?'en':'zh-CN') : '—'; }
 function requestSummary(record) { const request=record?.request||{}; return `${[request.letter1,request.letter2,request.letter3].filter(Boolean).join(' ')} ${request.plateNumber||''}`.trim()||'—'; }
 function maskDocument(value) { const text=String(value||''); return text.length>4 ? `${text.slice(0,2)}${'*'.repeat(Math.min(8,text.length-4))}${text.slice(-2)}` : '*'.repeat(text.length); }
-function statusLabel(status) { return t(({success:'成功',failed:'失败',queued:'排队中',running:'执行中',cancelled:'已取消',interrupted:'中断',operational:'运行正常',degraded:'服务波动',outage:'服务中断',offline:'已停止',unknown:'等待检测',new:'未读',read:'已读',resolved:'已处理',archived:'已归档'})[status]||status||'未知'); }
-function componentLabel(component) { return t(({server:'本程序服务',official:'PPO 官网',queue:'队列',rate_limit:'流控'})[component]||component); }
+function statusLabel(status) { return t(({success:'成功',failed:'失败',queued:'排队中',running:'执行中',cancelled:'已取消',interrupted:'中断',operational:'运行正常',degraded:'服务波动',outage:'服务中断',offline:'已停止',unknown:'等待检测',verified:'已启用',paused:'已暂停',pending:'待验证',replaced:'已替换',superseded:'已失效',new:'未读',read:'已读',resolved:'已处理',archived:'已归档'})[status]||status||'未知'); }
+function componentLabel(component) { return t(({server:'本程序服务',official:'PPO 官网',queue:'队列',sms:'短信通知服务',rate_limit:'流控'})[component]||component); }
 function geoText(geo) { if (!geo) return t('待定位'); if (geo.scope==='loopback') return t('本机'); if (geo.scope==='private'||geo.scope==='link_local') return t('局域网'); if (geo.unavailable) return t('定位暂不可用'); return [geo.country,geo.region,geo.city,geo.isp].filter(Boolean).join(' · ')||t('未知'); }
 function updatePager(buttonSelector, hasMore, activeLabel) { const button=$(buttonSelector); button.disabled=!hasMore; button.textContent=hasMore?t(activeLabel):t('已全部加载'); }
 
@@ -39,6 +39,7 @@ function renderMetrics(status) {
   $('#metric-grid').innerHTML=[
     [t('本程序服务'),status.server.status,statusLabel(status.server.status),getLanguage()==='en'?`Up ${Math.floor(status.server.uptimeSeconds/60)} min`:`运行 ${Math.floor(status.server.uptimeSeconds/60)} 分钟`],
     [t('PPO 官网'),status.official.status,statusLabel(status.official.status),status.official.message],
+    [t('短信通知服务'),status.sms?.status||'unknown',statusLabel(status.sms?.status),status.sms?.message||t('等待检测')],
     [getLanguage()==='en'?'24-hour success rate':'24 小时成功率','',rate,getLanguage()==='en'?`${status.queries24h.success} success / ${status.queries24h.failed} failed`:`${status.queries24h.success} 成功 / ${status.queries24h.failed} 失败`],
     [t('当前队列'),'',`${status.queue.running+status.queue.queued}/${status.queue.capacity}`,t(status.queue.accepting?'正常接收查询':'暂时停止接收')],
     [t('未读'),'',state.overview?.feedback?.unread||0,getLanguage()==='en'?`${state.overview?.feedback?.total||0} total`:`累计 ${state.overview?.feedback?.total||0} 条`]
@@ -102,16 +103,48 @@ function renderSmsRules() {
 
 async function loadSmsConfig() {
   const data=await adminApi('/api/v1/admin/sms/config'); state.smsRules=data.rules||[];
-  $('#sms-enabled').checked=data.enabled===true; $('#sms-api-url').value=data.apiUrl||''; $('#sms-token').value=''; $('#sms-clear-token').checked=false;
+  $('#sms-enabled').checked=data.enabled===true; $('#sms-api-url').value=data.apiUrl||''; $('#sms-health-url').value=data.healthUrl||''; $('#sms-token').value=''; $('#sms-clear-token').checked=false;
   $('#sms-state').textContent=data.enabled?t('已启用'):t('未启用');
   $('#sms-token-status').textContent=data.tokenConfigured
     ? (data.tokenSource==='environment'?(getLanguage()==='en'?'Token configured by environment variable (takes priority)':'Token 已由环境变量配置（优先级最高）'):(getLanguage()==='en'?'Encrypted token is configured':'已配置加密保存的 Token'))
     : (getLanguage()==='en'?'Token is not configured':'尚未配置 Token');
-  $('#sms-clear-token').disabled=data.tokenSource==='environment'; renderSmsRules();
+  $('#sms-clear-token').disabled=data.tokenSource==='environment'; renderSmsHealth(data.health); renderSmsRules();
+}
+
+function renderSmsHealth(health={}) {
+  const box=$('#sms-health'); box.className=`sms-health ${escapeHtml(health.status||'unknown')}`;
+  box.querySelector('small').textContent=`${t(health.message||'等待检测')}${health.lastCheckedAt?` · ${formatTime(health.lastCheckedAt)}`:''}`;
+}
+
+function renderSmsBindings(data,append=false) {
+  const rows=data.items.map(item=>`<tr data-binding-id="${escapeHtml(item.id)}"><td class="nowrap">${formatTime(item.createdAt)}</td><td><select class="binding-status"><option value="verified" ${item.status==='verified'?'selected':''}>${t('已启用')}</option><option value="paused" ${item.status==='paused'?'selected':''}>${t('已暂停')}</option>${!['verified','paused'].includes(item.status)?`<option value="${escapeHtml(item.status)}" selected>${escapeHtml(statusLabel(item.status))}</option>`:''}</select></td><td><input class="binding-phone mono" value="${escapeHtml(item.to)}"></td><td><span class="binding-days"><input type="number" min="1" max="365" value="${Math.max(1,Math.round(item.intervalHours/24))}"> ${getLanguage()==='en'?'days':'天'}</span></td><td class="mono">${escapeHtml(item.queryId)}</td><td><span class="mono">${escapeHtml(item.deviceId||'—')}</span><small class="muted block mono">${escapeHtml(item.sourceIp||'—')}</small></td><td class="nowrap">${formatTime(item.nextRunAt)}</td><td><div class="cell-action"><button class="binding-save" type="button">${t('保存')}</button><button class="binding-delete danger" type="button">${t('删除')}</button></div></td></tr>`).join('');
+  if(append)$('#sms-binding-body').insertAdjacentHTML('beforeend',rows);else $('#sms-binding-body').innerHTML=rows||`<tr><td colspan="8" class="muted">${getLanguage()==='en'?'No phone bindings':'暂无手机号绑定'}</td></tr>`;
+  $('#sms-binding-total').textContent=getLanguage()==='en'?`${data.total} total`:`共 ${data.total} 条`; updatePager('#load-more-sms-bindings',data.hasMore,'加载更多绑定'); bindSmsBindingButtons();
+}
+
+async function loadSmsBindings({append=false}={}) {
+  if(!append)state.smsBindingCursor='';
+  const params=new URLSearchParams({limit:'30',q:$('#sms-binding-search').value.trim(),status:$('#sms-binding-status').value});
+  if(append&&state.smsBindingCursor)params.set('cursor',state.smsBindingCursor);
+  const data=await adminApi(`/api/v1/admin/sms/bindings?${params}`); state.smsBindingCursor=data.nextCursor||'';
+  state.smsBindings=append?[...state.smsBindings,...data.items]:data.items; renderSmsBindings(data,append);
+}
+
+function bindSmsBindingButtons() {
+  document.querySelectorAll('[data-binding-id] .binding-save').forEach(button=>button.addEventListener('click',async()=>{
+    const row=button.closest('[data-binding-id]'),message=$('#sms-binding-message'); message.classList.add('hidden'); button.disabled=true;
+    try { await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}`,{method:'PATCH',body:JSON.stringify({phone:row.querySelector('.binding-phone').value,status:row.querySelector('.binding-status').value,intervalHours:Number(row.querySelector('.binding-days input').value)*24})}); await loadSmsBindings(); }
+    catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');button.disabled=false;}
+  }));
+  document.querySelectorAll('[data-binding-id] .binding-delete').forEach(button=>button.addEventListener('click',async()=>{
+    const row=button.closest('[data-binding-id]'); if(!confirm(getLanguage()==='en'?'Delete this phone binding?':'确定删除这个手机号绑定吗？'))return;
+    try { await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}`,{method:'DELETE',body:'{}'}); await loadSmsBindings(); }
+    catch(error){const message=$('#sms-binding-message');message.textContent=localizeError(error);message.classList.remove('hidden');}
+  }));
 }
 
 function renderSmsDeliveries(data,append=false) {
-  const rows=data.items.map(item=>`<tr><td class="nowrap">${formatTime(item.createdAt)}</td><td><span class="status ${escapeHtml(item.status)}"><i></i>${escapeHtml(item.status)}</span></td><td>${escapeHtml(item.matchType==='plate'?(getLanguage()==='en'?'Plate':'车牌'):(getLanguage()==='en'?'Document':'证件'))}<small class="muted block mono">${escapeHtml(item.matchValue)}</small></td><td class="mono">${escapeHtml(item.to)}</td><td><button class="search-value mono" data-search-log="${escapeHtml(item.traceId)}">${escapeHtml(item.traceId)}</button></td><td>${escapeHtml(item.providerStatus||item.error||'—')}<small class="muted block">${escapeHtml(item.providerMessageId||'')} · ${escapeHtml(item.attempts)} ${getLanguage()==='en'?'attempt(s)':'次尝试'}</small></td></tr>`).join('');
+  const rows=data.items.map(item=>`<tr><td class="nowrap">${formatTime(item.createdAt)}</td><td><span class="status ${escapeHtml(item.status)}"><i></i>${escapeHtml(item.status)}</span></td><td>${escapeHtml(item.matchType==='plate'?(getLanguage()==='en'?'Plate':'车牌'):item.matchType==='periodic_binding'?(getLanguage()==='en'?'Periodic':'周期'):(getLanguage()==='en'?'Document':'证件'))}<small class="muted block mono">${escapeHtml(item.matchValue)}</small></td><td class="mono">${escapeHtml(item.to)}</td><td><button class="search-value mono" data-search-log="${escapeHtml(item.traceId)}">${escapeHtml(item.traceId)}</button></td><td>${escapeHtml(item.providerStatus||item.error||'—')}<small class="muted block">${escapeHtml(item.providerMessageId||'')} · ${escapeHtml(item.attempts)} ${getLanguage()==='en'?'attempt(s)':'次尝试'}</small></td></tr>`).join('');
   if(append)$('#sms-delivery-body').insertAdjacentHTML('beforeend',rows);else $('#sms-delivery-body').innerHTML=rows||`<tr><td colspan="6" class="muted">${getLanguage()==='en'?'No SMS deliveries':'暂无短信投递记录'}</td></tr>`;
   $('#sms-delivery-total').textContent=getLanguage()==='en'?`${data.total} total`:`共 ${data.total} 条`; updatePager('#load-more-sms-deliveries',data.hasMore,'加载更多投递'); bindLogSearchButtons();
 }
@@ -182,7 +215,7 @@ async function showFeedback(id) {
 }
 
 function showLogin(auth) { $('#admin-content').classList.add('hidden'); $('#login-panel').classList.remove('hidden'); $('#login-hint').textContent=auth.passwordConfigured?t('请输入远程管理员密码。'):(getLanguage()==='en'?'No password is configured. Open Admin from the desktop GUI and select “Set password”.':'尚未设置密码。请先在桌面 GUI 的 Admin 页面点击“设置密码”。'); $('#login-password').disabled=!auth.passwordConfigured; $('#admin-live').className='live offline'; $('#admin-live').innerHTML=`<i></i>${t('需要登录')}`; }
-async function enterAdmin(auth) { state.auth=auth; state.csrfToken=auth.csrfToken||''; $('#login-panel').classList.add('hidden'); $('#admin-content').classList.remove('hidden'); $('#password-button').classList.remove('hidden'); $('#logout-button').classList.toggle('hidden',auth.desktop); $('#current-password-field').classList.toggle('hidden',auth.desktop); await Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsDeliveries()]); }
+async function enterAdmin(auth) { state.auth=auth; state.csrfToken=auth.csrfToken||''; $('#login-panel').classList.add('hidden'); $('#admin-content').classList.remove('hidden'); $('#password-button').classList.remove('hidden'); $('#logout-button').classList.toggle('hidden',auth.desktop); $('#current-password-field').classList.toggle('hidden',auth.desktop); await Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries()]); }
 async function initialize() { try { const auth=await adminApi('/api/v1/admin/auth/status'); if(auth.authenticated) await enterAdmin(auth); else showLogin(auth); } catch(error) { showLogin({passwordConfigured:false}); $('#login-message').textContent=localizeError(error); $('#login-message').classList.remove('hidden'); } }
 
 $('#login-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#login-message');message.classList.add('hidden');try{const result=await adminApi('/api/v1/admin/login',{method:'POST',body:JSON.stringify({password:$('#login-password').value})});await enterAdmin({authenticated:true,desktop:false,passwordConfigured:true,csrfToken:result.csrfToken});}catch(error){message.textContent=error.retryAfterMs?`${localizeError(error)} ${getLanguage()==='en'?`(about ${Math.ceil(error.retryAfterMs/1000)}s)`:`（约 ${Math.ceil(error.retryAfterMs/1000)} 秒）`}`:localizeError(error);message.classList.remove('hidden');}});
@@ -194,9 +227,13 @@ $('#refresh-overview').addEventListener('click',()=>Promise.all([loadOverview(),
 $('#feedback-filter').addEventListener('submit',event=>{event.preventDefault();loadFeedback();}); $('#load-more-feedback').addEventListener('click',()=>loadFeedback({append:true}));
 $('#check-core-update').addEventListener('click',()=>coreAction('check')); $('#install-core-update').addEventListener('click',()=>coreAction('update')); $('#rollback-core').addEventListener('click',()=>coreAction('rollback'));
 $('#add-sms-rule').addEventListener('click',()=>{state.smsRules.push({id:'',enabled:true,type:'document',matchValue:'',to:'',template:''});renderSmsRules();});
-$('#sms-config-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-message');message.classList.add('hidden');try{const rules=[...document.querySelectorAll('[data-sms-rule]')].map(row=>({id:row.querySelector('.sms-rule-id').value,enabled:row.querySelector('.sms-rule-enabled').checked,type:row.querySelector('.sms-rule-type').value,matchValue:row.querySelector('.sms-rule-match').value.trim(),to:row.querySelector('.sms-rule-to').value.trim(),template:row.querySelector('.sms-rule-template').value.trim()}));await adminApi('/api/v1/admin/sms/config',{method:'PUT',body:JSON.stringify({enabled:$('#sms-enabled').checked,apiUrl:$('#sms-api-url').value.trim(),token:$('#sms-token').value.trim(),clearToken:$('#sms-clear-token').checked,rules})});message.textContent=getLanguage()==='en'?'SMS settings saved.':'短信配置已保存。';message.classList.remove('hidden');await loadSmsConfig();}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
+$('#sms-config-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-message');message.classList.add('hidden');try{const rules=[...document.querySelectorAll('[data-sms-rule]')].map(row=>({id:row.querySelector('.sms-rule-id').value,enabled:row.querySelector('.sms-rule-enabled').checked,type:row.querySelector('.sms-rule-type').value,matchValue:row.querySelector('.sms-rule-match').value.trim(),to:row.querySelector('.sms-rule-to').value.trim(),template:row.querySelector('.sms-rule-template').value.trim()}));await adminApi('/api/v1/admin/sms/config',{method:'PUT',body:JSON.stringify({enabled:$('#sms-enabled').checked,apiUrl:$('#sms-api-url').value.trim(),healthUrl:$('#sms-health-url').value.trim(),token:$('#sms-token').value.trim(),clearToken:$('#sms-clear-token').checked,rules})});message.textContent=getLanguage()==='en'?'SMS settings saved.':'短信配置已保存。';message.classList.remove('hidden');await loadSmsConfig();}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
+$('#check-sms-health').addEventListener('click',async()=>{const button=$('#check-sms-health');button.disabled=true;try{renderSmsHealth(await adminApi('/api/v1/admin/sms/health-check',{method:'POST',body:'{}'}));await Promise.all([loadOverview(),loadServiceEvents()]);}finally{button.disabled=false;}});
+$('#sms-binding-create').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-binding-message');message.classList.add('hidden');try{await adminApi('/api/v1/admin/sms/bindings',{method:'POST',body:JSON.stringify({queryId:$('#sms-binding-query-id').value.trim(),phone:$('#sms-binding-phone').value.trim(),intervalHours:Number($('#sms-binding-days').value)*24})});event.target.reset();$('#sms-binding-days').value='7';await Promise.all([loadSmsBindings(),loadSmsDeliveries()]);}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
+$('#sms-binding-filter').addEventListener('submit',event=>{event.preventDefault();loadSmsBindings();});
+$('#load-more-sms-bindings').addEventListener('click',()=>loadSmsBindings({append:true}));
 $('#load-more-sms-deliveries').addEventListener('click',()=>loadSmsDeliveries({append:true}));
 $('#log-filter').addEventListener('submit',event=>{event.preventDefault();loadLogs();}); $('#load-more-logs').addEventListener('click',()=>loadLogs({append:true})); $('#load-more-service-events').addEventListener('click',()=>loadServiceEvents({append:true})); document.querySelectorAll('[data-event]').forEach(button=>button.addEventListener('click',()=>{$('#log-event').value=button.dataset.event;loadLogs();})); document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>document.getElementById(button.dataset.close).close()));
 initializePreferences($('.header-actions'));
-window.addEventListener('ppo:languagechange',()=>{ if(state.auth)Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsDeliveries()]).then(()=>applyTranslations()).catch(()=>{}); else showLogin({passwordConfigured:!$('#login-password').disabled}); });
+window.addEventListener('ppo:languagechange',()=>{ if(state.auth)Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries()]).then(()=>applyTranslations()).catch(()=>{}); else showLogin({passwordConfigured:!$('#login-password').disabled}); });
 setInterval(()=>{if(state.auth&&!document.hidden)loadOverview().catch(()=>{});},10_000); initialize();

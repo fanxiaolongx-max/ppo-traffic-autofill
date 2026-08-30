@@ -52,6 +52,7 @@ const broadcast = record => {
 };
 const driver = new PPOQueryDriver(config, logger);
 const smsNotifier = new SmsNotifier({ store, logger, config, secretStore });
+smsNotifier.startHealthMonitor();
 
 let repairedResultCount = 0;
 for (const record of store.list(500, ['success'])) {
@@ -104,7 +105,7 @@ function statusSnapshot({ includeInternal = false, eventLimit = 20, eventCursor 
     cursor: eventCursor,
     offset: eventOffset,
     sinceIso,
-    components: ['server', 'official', 'queue']
+    components: ['server', 'official', 'queue', 'sms']
   });
   const publicEvents = publicEventPage.items
     .map(({ id, component, status, code, message, createdAt }) => ({ id, component, status, code, message, createdAt }));
@@ -117,6 +118,7 @@ function statusSnapshot({ includeInternal = false, eventLimit = 20, eventCursor 
       lastCode: latestOfficial?.code || null,
       message: circuitOpen ? '连续异常，当前处于保护性暂停状态' : (officialIsFresh ? latestOfficial.message : '最近没有足够新的官网查询样本')
     },
+    sms: smsNotifier.healthSnapshot(),
     queries24h: statistics,
     queue: {
       running: queueState.runningCount,
@@ -444,7 +446,7 @@ export const server = http.createServer(async (request, response) => {
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/sms/config') {
       requireAdmin(request);
-      return json(response, 200, smsNotifier.getConfig());
+      return json(response, 200, { ...smsNotifier.getConfig(), health: smsNotifier.healthSnapshot() });
     }
     if (request.method === 'PUT' && url.pathname === '/api/v1/admin/sms/config') {
       const context = requireAdmin(request);
@@ -458,6 +460,42 @@ export const server = http.createServer(async (request, response) => {
         limit: Math.min(Number(url.searchParams.get('limit')) || 20, 100),
         cursor: url.searchParams.get('cursor') || ''
       }));
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/admin/sms/health-check') {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      return json(response, 200, await smsNotifier.checkHealth());
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/sms/bindings') {
+      requireAdmin(request);
+      return json(response, 200, store.listSmsBindings({
+        limit: Math.min(Number(url.searchParams.get('limit')) || 50, 200),
+        cursor: url.searchParams.get('cursor') || '', query: url.searchParams.get('q') || '',
+        status: url.searchParams.get('status') || ''
+      }));
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/admin/sms/bindings') {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const payload = await body(request);
+      const record = store.getQuery(String(payload.queryId || ''));
+      if (!record) return json(response, 404, { error: { code: 'NOT_FOUND', message: '查询记录不存在' } });
+      return json(response, 201, smsNotifier.adminCreateBinding(record, payload));
+    }
+    const adminSmsBinding = url.pathname.match(/^\/api\/v1\/admin\/sms\/bindings\/([^/]+)$/);
+    if (request.method === 'PATCH' && adminSmsBinding) {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const binding = smsNotifier.adminUpdateBinding(adminSmsBinding[1], await body(request));
+      return binding ? json(response, 200, binding) : json(response, 404, { error: { code: 'NOT_FOUND', message: '手机号绑定不存在' } });
+    }
+    if (request.method === 'DELETE' && adminSmsBinding) {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const deleted = store.deleteSmsBinding(adminSmsBinding[1]);
+      if (!deleted) return json(response, 404, { error: { code: 'NOT_FOUND', message: '手机号绑定不存在' } });
+      logger.info('sms_binding_admin_deleted', { bindingId: adminSmsBinding[1], sourceIp: clientIp(request) });
+      return json(response, 200, { deleted: true });
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/logs') {
       requireAdmin(request);
@@ -779,6 +817,7 @@ export async function shutdownServer(signal) {
   store.addServiceEvent('server', 'offline', 'SERVER_STOPPED', '查询服务正在停止', { signal }, { force: true });
   clearInterval(heartbeatTimer);
   smsScheduler.stop();
+  smsNotifier.stopHealthMonitor();
   for (const client of clients) client.response.end();
   await new Promise(resolve => server.close(resolve));
   await driver.close();

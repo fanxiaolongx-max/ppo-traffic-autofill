@@ -5,11 +5,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { Store } from '../src/db.js';
 import { SecretStore } from '../src/secret-store.js';
-import { normalizeEgyptMobile, normalizeSmsMatch, SmsNotifier } from '../src/sms-notifier.js';
+import { normalizeEgyptMobile, normalizeSmsMatch, periodicResultMessage, SmsNotifier } from '../src/sms-notifier.js';
 
 const logger = { info() {}, warn() {}, error() {} };
 const baseConfig = {
-  smsApiUrl: 'https://sms.example.test/messages', smsApiToken: '', smsTimeoutMs: 2_000, smsMaxAttempts: 2,
+  smsApiUrl: 'https://sms.example.test/messages', smsApiToken: '', smsHealthUrl: '', smsHealthIntervalMs: 300_000, smsHealthTimeoutMs: 2_000, smsTimeoutMs: 2_000, smsMaxAttempts: 2,
   smsBindingCodeTtlMs: 600_000, smsBindingResendMs: 60_000, smsBindingVerifyAttempts: 5,
   smsBindingWindowMs: 86_400_000, smsBindingRequestsPerDeviceIp: 6,
   smsBindingPhonesPerDeviceIp: 3, smsBindingQueriesPerPhone: 5,
@@ -36,6 +36,16 @@ test('normalizes Egyptian mobile numbers with or without the local zero prefix',
   assert.equal(normalizeEgyptMobile('10-1234-5678'), '+201012345678');
   assert.equal(normalizeEgyptMobile('+20 15 1234 5678'), '+201512345678');
   assert.throws(() => normalizeEgyptMobile('01312345678'), error => error.code === 'INVALID_EGYPT_MOBILE');
+});
+
+test('formats periodic SMS as one concise change and cumulative summary line', () => {
+  const record = {
+    request: { letter1:'أ', letter2:'ف', plateNumber:'3413' },
+    result: { violationCount:'٥', totalFine:'1,200 جنيه' }
+  };
+  assert.equal(periodicResultMessage(record, { violationCount:3, totalFine:'850 جنيه' }), '周期查询 أ ف 3413｜本期 +2笔 / +350 جنيه｜累计 5笔 / 1,200 جنيه');
+  assert.equal(periodicResultMessage(record, { violationCount:'٥', totalFine:'1,200 جنيه' }), '周期查询 أ ف 3413｜本期无变化｜累计 5笔 / 1,200 جنيه');
+  assert.equal(periodicResultMessage(record), '周期查询 أ ف 3413｜首次记录｜累计 5笔 / 1,200 جنيه');
 });
 
 test('requires OTP verification before enabling a user binding and sends the current result once', async () => {
@@ -65,6 +75,9 @@ test('requires OTP verification before enabling a user binding and sends the cur
     assert.equal(verified.intervalHours, 168);
     assert.ok(new Date(verified.nextRunAt).getTime() > Date.now() + 167 * 3_600_000);
     assert.equal(store.listVerifiedSmsBindings(record.fingerprint)[0].to, '+201012345678');
+    assert.equal(notifier.bindingStatus(record, { deviceId:record.deviceId, sourceIp:'198.51.100.8' }).status, 'verified');
+    assert.equal(notifier.bindingStatus(record, { deviceId:'different-device', sourceIp:record.sourceIp }).status, 'unbound');
+    assert.equal(notifier.bindingStatus({ ...record, fingerprint:'different-query' }, context).status, 'unbound');
     const rescheduled = notifier.updateBindingSchedule(record, context, 24);
     assert.equal(rescheduled.intervalHours, 24);
     assert.ok(new Date(rescheduled.nextRunAt).getTime() > Date.now() + 23 * 3_600_000);
@@ -137,4 +150,94 @@ test('SMS API failures are recorded without changing the terminal query result',
     assert.equal(store.getQuery(record.id).status, 'failed');
     assert.equal(store.getQuery(record.id).error.message, '官网拒绝了查询');
   } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('admin can create, edit, pause, list and delete a verified phone binding', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ppo-sms-admin-binding-'));
+  const store = new Store(directory);
+  const notifier = new SmsNotifier({
+    store, logger, config: baseConfig, secretStore: new SecretStore(directory),
+    fetchImpl: async () => ({ ok: true, status: 200, async json() { return { message: { status: 'queued' } }; } })
+  });
+  try {
+    notifier.configure({ enabled: true, apiUrl: baseConfig.smsApiUrl, token: 'sms_test', rules: [] });
+    const record = query(store, { letter1: 'أ', letter2: 'ف', plateNumber: '3413', documentNumber: 'EC8961802' });
+    const created = notifier.adminCreateBinding(record, { phone: '01012345678', intervalHours: 168 });
+    assert.equal(created.status, 'verified');
+    assert.equal(created.to, '+201012345678');
+    const unrelated = query(store, { letter1:'ب', letter2:'ج', plateNumber:'9000', documentNumber:'EC0000001' });
+    store.createSmsBinding({ id:'smsb_unrelated', queryFingerprint:unrelated.fingerprint, queryId:unrelated.id, to:'+201212345678', deviceId:'other-device', sourceIp:'192.0.2.1', codeSalt:'salt', codeHash:'hash', intervalHours:168, expiresAt:new Date(Date.now()+60_000).toISOString(), resendAfter:new Date().toISOString() });
+    const filtered = store.listSmsBindings({ query: record.id });
+    assert.equal(filtered.total, 1);
+    assert.equal(filtered.items[0].id, created.id);
+    const updated = notifier.adminUpdateBinding(created.id, { phone: '01112345678', intervalHours: 24, status: 'paused' });
+    assert.equal(updated.to, '+201112345678');
+    assert.equal(updated.intervalHours, 24);
+    assert.equal(updated.status, 'paused');
+    assert.equal(store.claimDueSmsSchedule(new Date(Date.now() + 2 * 86_400_000).toISOString(), new Date(Date.now() + 3 * 86_400_000).toISOString()), null);
+    assert.equal(store.deleteSmsBinding(created.id), true);
+    assert.equal(store.getSmsBinding(created.id), null);
+    for (let i = 0; i < 30 && store.listSmsDeliveries().items.some(item => !['accepted', 'failed'].includes(item.status)); i += 1) await new Promise(resolve => setTimeout(resolve, 10));
+  } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('scheduled result compares with the last delivered result and only notifies its owning binding', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ppo-sms-periodic-result-'));
+  const store = new Store(directory);
+  const calls = [];
+  const notifier = new SmsNotifier({
+    store, logger, config: baseConfig, secretStore: new SecretStore(directory),
+    fetchImpl: async (_url, options) => {
+      calls.push(JSON.parse(options.body));
+      return { ok:true, status:200, async json() { return { message:{ status:'queued' } }; } };
+    }
+  });
+  try {
+    notifier.configure({ enabled:true, apiUrl:baseConfig.smsApiUrl, token:'sms_test', rules:[] });
+    const source = query(store, { letter1:'أ', letter2:'ف', plateNumber:'3413', documentNumber:'EC8961802' });
+    const owner = notifier.adminCreateBinding(source, { phone:'01012345678', intervalHours:24 });
+    store.createVerifiedSmsBinding({
+      id:'smsb_other_recipient', queryFingerprint:source.fingerprint, queryId:source.id,
+      to:'+201112345678', deviceId:'other-device', sourceIp:'192.0.2.2', intervalHours:24,
+      initialResult:source.result
+    });
+    for (let i=0;i<30&&calls.length<1;i+=1) await new Promise(resolve=>setTimeout(resolve,10));
+
+    const now=new Date().toISOString();
+    const created=store.createQuery({
+      id:'qry_periodic_delta',requestId:null,traceId:'tr_periodic_delta',fingerprint:source.fingerprint,
+      status:'queued',progress:0,step:'queued',request:source.request,source:'scheduled_sms',
+      sourceIp:source.sourceIp,deviceId:source.deviceId,userAgent:'scheduler',createdAt:now
+    });
+    const scheduled=store.updateQuery(created.id,{status:'success',result:{totalFine:'750 جنيه',violationCount:3},finishedAt:now});
+    store.completeSmsSchedule(owner.id,{queryId:scheduled.id,nextRunAt:new Date(Date.now()+86_400_000).toISOString(),runAt:now});
+    assert.equal(notifier.handleTerminal(scheduled),1);
+    for (let i=0;i<30&&calls.length<2;i+=1) await new Promise(resolve=>setTimeout(resolve,10));
+    assert.equal(calls.length,2);
+    assert.equal(calls[1].to,'+201012345678');
+    assert.equal(calls[1].text,'周期查询 أ ف 3413｜本期 +2笔 / +350 جنيه｜累计 3笔 / 750 جنيه');
+    assert.deepEqual(store.getSmsBinding(owner.id).lastResult,{totalFine:'750 جنيه',violationCount:3});
+  } finally { store.close(); fs.rmSync(directory,{recursive:true,force:true}); }
+});
+
+test('periodic SMS health checks report healthy and unavailable API states', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ppo-sms-health-'));
+  const store = new Store(directory);
+  let healthy = true;
+  const notifier = new SmsNotifier({
+    store, logger, config: baseConfig, secretStore: new SecretStore(directory),
+    fetchImpl: async (_url, options) => {
+      assert.equal(options.method, 'GET');
+      return { ok: healthy, status: healthy ? 200 : 503 };
+    }
+  });
+  try {
+    notifier.configure({ enabled: true, apiUrl: baseConfig.smsApiUrl, healthUrl: 'https://sms.example.test/health', token: 'sms_test', rules: [] });
+    assert.equal((await notifier.checkHealth()).status, 'operational');
+    healthy = false;
+    const outage = await notifier.checkHealth();
+    assert.equal(outage.status, 'outage');
+    assert.equal(outage.code, 'SMS_HEALTH_HTTP_ERROR');
+    assert.deepEqual(store.listServiceEvents(10).filter(event => event.component === 'sms').map(event => event.status), ['outage', 'operational']);
+  } finally { notifier.stopHealthMonitor(); store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 });

@@ -46,6 +46,10 @@ function validateUrl(value) {
   return url.toString().replace(/\/$/, '');
 }
 
+function defaultHealthUrl(apiUrl) {
+  return new URL('/api/v1/health', apiUrl).toString().replace(/\/$/, '');
+}
+
 function validateRules(rules) {
   if (!Array.isArray(rules) || rules.length > 100) throw Object.assign(new Error('短信通知规则最多 100 条'), { code: 'INVALID_SMS_RULES', statusCode: 422 });
   const ids = new Set();
@@ -77,6 +81,48 @@ function defaultMessage(record) {
   return `埃及车辆违章查询：${plate}，查询失败：${record.error?.message || record.detail || '未知错误'}。追踪号 ${record.traceId}`;
 }
 
+function numericValue(value) {
+  const normalized = String(value ?? '')
+    .replace(/[٠-٩]/g, digit => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+    .replace(/[۰-۹]/g, digit => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/,/g, '');
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+function compactNumber(value) {
+  return Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+function signedNumber(value) {
+  return `${value > 0 ? '+' : ''}${compactNumber(value)}`;
+}
+
+export function periodicResultMessage(record, previousResult = null) {
+  const current = record.result || {};
+  const plate = plateOf(record);
+  const currentCount = numericValue(current.violationCount);
+  const currentFine = numericValue(current.totalFine);
+  const countText = currentCount == null ? String(current.violationCount ?? '—') : compactNumber(currentCount);
+  const fineText = currentFine == null ? String(current.totalFine || '—') : `${compactNumber(currentFine)} جنيه`;
+  const cumulative = `累计 ${countText}笔 / ${fineText}`;
+  if (!previousResult) return `周期查询 ${plate}｜首次记录｜${cumulative}`;
+
+  const previousCount = numericValue(previousResult.violationCount);
+  const previousFine = numericValue(previousResult.totalFine);
+  if (currentCount == null || currentFine == null || previousCount == null || previousFine == null) {
+    const unchanged = String(current.violationCount) === String(previousResult.violationCount)
+      && String(current.totalFine) === String(previousResult.totalFine);
+    return `周期查询 ${plate}｜${unchanged ? '本期无变化' : '本期有变化'}｜${cumulative}`;
+  }
+  const countDelta = currentCount - previousCount;
+  const fineDelta = currentFine - previousFine;
+  const change = countDelta === 0 && fineDelta === 0
+    ? '本期无变化'
+    : `本期 ${signedNumber(countDelta)}笔 / ${signedNumber(fineDelta)} جنيه`;
+  return `周期查询 ${plate}｜${change}｜${cumulative}`;
+}
+
 function renderTemplate(template, record) {
   if (!template) return defaultMessage(record);
   const values = {
@@ -99,6 +145,9 @@ export class SmsNotifier {
   constructor({ store, logger, config, secretStore, fetchImpl = fetch }) {
     Object.assign(this, { store, logger, config, secretStore, fetchImpl });
     this.running = false;
+    this.healthRunning = false;
+    this.healthTimer = null;
+    this.health = { status: 'unknown', lastCheckedAt: null, code: 'SMS_HEALTH_PENDING', message: '短信服务等待首次检测' };
     queueMicrotask(() => this.drain());
   }
 
@@ -112,6 +161,7 @@ export class SmsNotifier {
     return {
       enabled: saved.enabled === true,
       apiUrl: saved.apiUrl || this.config.smsApiUrl,
+      healthUrl: saved.healthUrl || this.config.smsHealthUrl || defaultHealthUrl(saved.apiUrl || this.config.smsApiUrl),
       rules: Array.isArray(saved.rules) ? saved.rules : [],
       tokenConfigured: Boolean(this.config.smsApiToken || storedToken), tokenSource
     };
@@ -125,13 +175,96 @@ export class SmsNotifier {
   configure(input) {
     const current = this.getConfig();
     const rules = validateRules(input.rules ?? current.rules);
-    const next = { enabled: input.enabled === true, apiUrl: validateUrl(input.apiUrl || current.apiUrl), rules };
+    const apiUrl = validateUrl(input.apiUrl || current.apiUrl);
+    const healthUrl = validateUrl(input.healthUrl || current.healthUrl || defaultHealthUrl(apiUrl));
+    const next = { enabled: input.enabled === true, apiUrl, healthUrl, rules };
     if (input.clearToken === true && !this.config.smsApiToken) this.store.setSetting(TOKEN_KEY, null);
     else if (String(input.token || '').trim()) this.store.setSetting(TOKEN_KEY, this.secretStore.encrypt(String(input.token).trim()));
     this.store.setSetting(SETTING_KEY, next);
     this.logger.info('sms_config_updated', { enabled: next.enabled, apiHost: new URL(next.apiUrl).host, ruleCount: rules.length, tokenChanged: Boolean(input.clearToken || String(input.token || '').trim()) });
     if (next.enabled) queueMicrotask(() => this.drain());
+    if (this.healthTimer) queueMicrotask(() => this.checkHealth());
     return this.getConfig();
+  }
+
+  startHealthMonitor() {
+    if (this.healthTimer) return;
+    void this.checkHealth();
+    this.healthTimer = setInterval(() => void this.checkHealth(), this.config.smsHealthIntervalMs);
+    this.healthTimer.unref?.();
+  }
+
+  stopHealthMonitor() {
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.healthTimer = null;
+  }
+
+  healthSnapshot() {
+    const settings = this.getConfig();
+    if (!settings.enabled) return { status: 'offline', lastCheckedAt: this.health.lastCheckedAt, code: 'SMS_DISABLED', message: '短信通知服务未启用' };
+    if (!settings.tokenConfigured) return { status: 'unknown', lastCheckedAt: this.health.lastCheckedAt, code: 'SMS_TOKEN_MISSING', message: '短信服务尚未完成配置' };
+    return { ...this.health };
+  }
+
+  async checkHealth() {
+    if (this.healthRunning) return this.healthSnapshot();
+    const settings = this.getConfig();
+    if (!settings.enabled || !settings.tokenConfigured) {
+      const status = settings.enabled ? 'unknown' : 'offline';
+      const code = settings.enabled ? 'SMS_TOKEN_MISSING' : 'SMS_DISABLED';
+      const message = settings.enabled ? '短信服务尚未完成配置' : '短信通知服务未启用';
+      this.health = { status, code, message, lastCheckedAt: new Date().toISOString() };
+      this.store.addServiceEvent('sms', status, code, message);
+      return this.healthSnapshot();
+    }
+    this.healthRunning = true;
+    const checkedAt = new Date().toISOString();
+    try {
+      const response = await this.fetchImpl(settings.healthUrl, {
+        method: 'GET', signal: AbortSignal.timeout(this.config.smsHealthTimeoutMs),
+        headers: { authorization: `Bearer ${this.token()}`, accept: 'application/json' }
+      });
+      if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+      this.health = { status: 'operational', code: 'SMS_HEALTHY', message: '短信通知服务运行正常', lastCheckedAt: checkedAt };
+      this.store.addServiceEvent('sms', 'operational', 'SMS_HEALTHY', this.health.message, { httpStatus: response.status });
+    } catch (error) {
+      const timeout = error.name === 'TimeoutError' || error.name === 'AbortError';
+      const code = timeout ? 'SMS_HEALTH_TIMEOUT' : error.status ? 'SMS_HEALTH_HTTP_ERROR' : 'SMS_HEALTH_UNREACHABLE';
+      const message = timeout ? '短信通知服务检测超时' : error.status ? `短信通知服务返回 HTTP ${error.status}` : '短信通知服务暂时无法连接';
+      this.health = { status: 'outage', code, message, lastCheckedAt: checkedAt };
+      this.store.addServiceEvent('sms', 'outage', code, message, { httpStatus: error.status || null });
+      this.logger.warn('sms_health_check_failed', { code, error: { message: error.message } });
+    } finally {
+      this.healthRunning = false;
+    }
+    return this.healthSnapshot();
+  }
+
+  adminCreateBinding(record, { phone, intervalHours }) {
+    if (!record || record.status !== 'success') throw bindingError('SMS_BINDING_QUERY_NOT_SUCCESS', '只能为查询成功的记录创建绑定', 409);
+    const binding = this.store.createVerifiedSmsBinding({
+      id: `smsb_admin_${crypto.randomUUID()}`, queryFingerprint: record.fingerprint, queryId: record.id,
+      to: normalizeEgyptMobile(phone), deviceId: record.deviceId, sourceIp: record.sourceIp,
+      intervalHours: scheduleHours(intervalHours, this.config), initialResult: record.result
+    });
+    this.queueBindingResult(record, binding);
+    this.logger.info('sms_binding_admin_created', { bindingId: binding.id, queryId: record.id, intervalHours: binding.intervalHours, toMasked: maskedPhone(binding.to) });
+    return binding;
+  }
+
+  adminUpdateBinding(id, input) {
+    const current = this.store.getSmsBinding(id);
+    if (!current) return null;
+    const patch = {};
+    if (input.phone !== undefined) patch.to = normalizeEgyptMobile(input.phone);
+    if (input.intervalHours !== undefined) patch.intervalHours = scheduleHours(input.intervalHours, this.config);
+    if (input.status !== undefined) {
+      if (!['verified', 'paused'].includes(input.status)) throw bindingError('INVALID_SMS_BINDING_STATUS', '绑定状态只能是启用或暂停', 422);
+      patch.status = input.status;
+    }
+    const binding = this.store.updateSmsBindingAdmin(id, patch);
+    this.logger.info('sms_binding_admin_updated', { bindingId: id, status: binding.status, intervalHours: binding.intervalHours, toMasked: maskedPhone(binding.to) });
+    return binding;
   }
 
   bindingStatus(record, { deviceId, sourceIp }) {
@@ -211,6 +344,7 @@ export class SmsNotifier {
       throw bindingError('SMS_CODE_INVALID', `验证码不正确，还可尝试 ${remaining} 次`, 422);
     }
     const verified = this.store.verifySmsBinding(binding.id);
+    this.store.updateSmsBindingLastResult(binding.id, record.result);
     this.queueBindingResult(record, verified);
     this.logger.info('sms_binding_verified', { queryId: record.id, traceId: record.traceId, bindingId: binding.id, deviceId, sourceIp, toMasked: maskedPhone(binding.to) });
     return { ...this.bindingStatus(record, { deviceId, sourceIp }), status: 'verified', phoneMasked: maskedPhone(binding.to) };
@@ -246,6 +380,15 @@ export class SmsNotifier {
     });
   }
 
+  queuePeriodicResult(record, binding) {
+    const original = this.store.getQuery(binding.queryId);
+    const previousResult = binding.lastResult || original?.result || null;
+    return this.queueMessage(record, {
+      ruleId: `userbind_${binding.id}`, matchType: 'periodic_binding', matchValue: binding.id,
+      to: binding.to, text: periodicResultMessage(record, previousResult)
+    });
+  }
+
   handleTerminal(record) {
     if (!['success', 'failed'].includes(record?.status)) return 0;
     const settings = this.getConfig();
@@ -260,8 +403,14 @@ export class SmsNotifier {
       if (delivery) created += 1;
     }
     if (record.status === 'success') {
-      for (const binding of this.store.listVerifiedSmsBindings(record.fingerprint)) {
-        if (this.queueBindingResult(record, binding)) created += 1;
+      const bindings = record.source === 'scheduled_sms'
+        ? [this.store.smsBindingByLastQueryId(record.id)].filter(Boolean)
+        : this.store.listVerifiedSmsBindings(record.fingerprint);
+      for (const binding of bindings) {
+        const delivery = record.source === 'scheduled_sms'
+          ? this.queuePeriodicResult(record, binding)
+          : this.queueBindingResult(record, binding);
+        if (delivery) created += 1;
       }
     }
     if (created) {
@@ -304,6 +453,10 @@ export class SmsNotifier {
       if (!response.ok) throw Object.assign(new Error(payload?.error?.message || `短信接口返回 HTTP ${response.status}`), { retryable: response.status === 429 || response.status >= 500 });
       const message = payload?.message || {};
       this.store.updateSmsDelivery(delivery.id, { status: 'accepted', providerMessageId: message.id || '', providerStatus: message.status || 'accepted', error: '' });
+      if (delivery.matchType === 'periodic_binding') {
+        const record = this.store.getQuery(delivery.queryId);
+        if (record?.result) this.store.updateSmsBindingLastResult(delivery.matchValue, record.result);
+      }
       this.logger.info('sms_notification_accepted', { queryId: delivery.queryId, traceId: delivery.traceId, deliveryId: delivery.id, providerMessageId: message.id || null, providerStatus: message.status || 'accepted', toMasked: maskedTo });
     } catch (error) {
       const latest = this.store.getSmsDelivery(delivery.id);

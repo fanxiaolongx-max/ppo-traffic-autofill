@@ -9,7 +9,10 @@ const hashDesktopToken = new URLSearchParams(window.location.hash.slice(1)).get(
 if (hashDesktopToken) sessionStorage.setItem('ppo-desktop-token', hashDesktopToken);
 const desktopToken = hashDesktopToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashDesktopToken) history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-const state = { history: [], queue: null, status: null, historyCursor: '', historyHasMore: false, evidenceUrls: [] };
+const state = {
+  history: [], queue: null, status: null, historyCursor: '', historyHasMore: false, evidenceUrls: [],
+  autoOpenQueryIds: new Set(), autoOpenReadyIds: [], autoOpenDetailBusy: false
+};
 const plateLetters = ['أ', 'ب', 'ج', 'د', 'ر', 'س', 'ص', 'ط', 'ع', 'ف', 'ق', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
 const normalizePlateLetter = value => String(value || '').replaceAll('\u0640', '').trim();
 let activeLetterSlot = 'letter1';
@@ -308,6 +311,40 @@ async function showDetail(id) {
   }
 }
 
+function considerAutoOpenDetail(query) {
+  if (!query?.id || !state.autoOpenQueryIds.has(query.id)) return;
+  if (query.status === 'success') {
+    state.autoOpenQueryIds.delete(query.id);
+    if (!state.autoOpenReadyIds.includes(query.id)) state.autoOpenReadyIds.push(query.id);
+    void drainAutoOpenDetails();
+  } else if (!['queued', 'running'].includes(query.status)) {
+    state.autoOpenQueryIds.delete(query.id);
+  }
+}
+
+function trackAutoOpenDetail(query) {
+  if (!query?.id) return;
+  state.autoOpenQueryIds.add(query.id);
+  considerAutoOpenDetail(query);
+}
+
+async function drainAutoOpenDetails() {
+  const dialog = $('#detail-dialog');
+  if (state.autoOpenDetailBusy || dialog.open || !state.autoOpenReadyIds.length) return;
+  const id = state.autoOpenReadyIds.shift();
+  state.autoOpenDetailBusy = true;
+  try {
+    await showDetail(id);
+  } catch (error) {
+    const message = $('#form-message');
+    message.textContent = localizeError(error);
+    message.style.color = ''; message.style.background = ''; message.style.borderColor = ''; message.classList.remove('hidden');
+  } finally {
+    state.autoOpenDetailBusy = false;
+    void drainAutoOpenDetails();
+  }
+}
+
 function smsIntervalDays(binding) {
   return Math.max(1, Math.round(Number(binding?.intervalHours || 168) / 24));
 }
@@ -446,10 +483,12 @@ $('#query-form').addEventListener('submit', async event => {
   submit.disabled = true; message.classList.add('hidden');
   try {
     const result = await api('/api/v1/queries', { method: 'POST', body: JSON.stringify(payload) });
+    trackAutoOpenDetail(result.query);
     remember(payload);
     message.textContent = t(result.reused ? '已找到相同任务，正在显示原查询进度。' : '提交成功，任务已进入查询队列。');
     message.style.color = 'var(--success-text)'; message.style.background = 'var(--success-bg)'; message.style.borderColor = 'var(--success-border)'; message.classList.remove('hidden');
     await refresh();
+    considerAutoOpenDetail(state.history.find(item => item.id === result.query?.id));
   } catch (error) {
     message.textContent = error.retryAfterMs ? `${localizeError(error)} ${getLanguage()==='en'?`(about ${Math.ceil(error.retryAfterMs/1000)}s)`:`（约 ${Math.ceil(error.retryAfterMs / 1000)} 秒）`}` : localizeError(error);
     message.style.color = ''; message.style.background = ''; message.style.borderColor = ''; message.classList.remove('hidden');
@@ -475,10 +514,11 @@ $('#document-number').addEventListener('input', event => {
   updateDocumentHint();
 });
 $('#toggle-document').addEventListener('click', () => { const input = $('#document-number'); input.type = input.type === 'password' ? 'text' : 'password'; $('#toggle-document').textContent = t(input.type === 'password' ? '显示' : '隐藏'); });
-$('#close-dialog').addEventListener('click', () => {
-  $('#detail-dialog').close();
+$('#close-dialog').addEventListener('click', () => $('#detail-dialog').close());
+$('#detail-dialog').addEventListener('close', () => {
   for (const url of state.evidenceUrls) URL.revokeObjectURL(url);
   state.evidenceUrls = [];
+  void drainAutoOpenDetails();
 });
 $('#refresh-history').addEventListener('click', () => { state.historyCursor = ''; refresh(); });
 $('#load-more-history').addEventListener('click', async () => {
@@ -589,6 +629,7 @@ function handleEventMessage(event) {
     }
   }
   render();
+  if (data.query) considerAutoOpenDetail(data.query);
 }
 
 function connectEvents() {

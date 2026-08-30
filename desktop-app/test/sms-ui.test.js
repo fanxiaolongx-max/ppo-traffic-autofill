@@ -21,6 +21,15 @@ test('SMS notification card has explicit light-theme surfaces', () => {
   assert.doesNotMatch(styles, /sms-phone-field[^\n]+background:#090f16/);
 });
 
+test('a foreground query opens its successful detail once without reacting to history refreshes', () => {
+  assert.match(app, /trackAutoOpenDetail\(result\.query\)/);
+  assert.match(app, /if \(data\.query\) considerAutoOpenDetail\(data\.query\)/);
+  assert.match(app, /state\.autoOpenQueryIds\.delete\(query\.id\)/);
+  assert.match(app, /if \(state\.autoOpenDetailBusy \|\| dialog\.open \|\| !state\.autoOpenReadyIds\.length\) return/);
+  const refreshBody = app.match(/async function refresh\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.doesNotMatch(refreshBody, /trackAutoOpenDetail/);
+});
+
 test('admin exposes phone binding management and public SMS service health', () => {
   const adminHtml = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
   const adminJs = fs.readFileSync(new URL('../public/admin.js', import.meta.url), 'utf8');

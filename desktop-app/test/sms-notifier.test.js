@@ -181,7 +181,7 @@ test('admin can create, edit, pause, list and delete a verified phone binding', 
   } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('scheduled result compares with the last delivered result and only notifies its owning binding', async () => {
+test('scheduled and manual results compare with the last delivered result and only notify their owning binding', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ppo-sms-periodic-result-'));
   const store = new Store(directory);
   const calls = [];
@@ -217,6 +217,27 @@ test('scheduled result compares with the last delivered result and only notifies
     assert.equal(calls[1].to,'+201012345678');
     assert.equal(calls[1].text,'周期查询 أ ف 3413｜本期 +2笔 / +350 جنيه｜累计 3笔 / 750 جنيه');
     assert.deepEqual(store.getSmsBinding(owner.id).lastResult,{totalFine:'750 جنيه',violationCount:3});
+
+    const manualCreated=store.createQuery({
+      id:'qry_manual_delta',requestId:`sms-manual:${owner.id}:12345`,traceId:'tr_manual_delta',fingerprint:source.fingerprint,
+      status:'queued',progress:0,step:'queued',request:source.request,source:'manual_sms',
+      sourceIp:source.sourceIp,deviceId:source.deviceId,userAgent:'admin test',createdAt:now
+    });
+    const manual=store.updateQuery(manualCreated.id,{status:'success',result:{totalFine:'900 جنيه',violationCount:4},finishedAt:now});
+    assert.equal(notifier.handleTerminal(manual),1);
+    for(let i=0;i<30&&calls.length<3;i+=1)await new Promise(resolve=>setTimeout(resolve,10));
+    assert.equal(calls[2].to,'+201012345678');
+    assert.equal(calls[2].text,'周期查询 أ ف 3413｜本期 +1笔 / +150 جنيه｜累计 4笔 / 900 جنيه');
+    const failedCreated=store.createQuery({
+      id:'qry_manual_failed',requestId:`sms-manual:${owner.id}:12346`,traceId:'tr_manual_failed',fingerprint:source.fingerprint,
+      status:'queued',progress:0,step:'queued',request:source.request,source:'manual_sms',
+      sourceIp:source.sourceIp,deviceId:source.deviceId,userAgent:'admin test',createdAt:now
+    });
+    const failed=store.updateQuery(failedCreated.id,{status:'failed',error:{code:'QUERY_TIMEOUT',message:'查询超时'},finishedAt:now});
+    assert.equal(notifier.handleTerminal(failed),1);
+    for(let i=0;i<30&&calls.length<4;i+=1)await new Promise(resolve=>setTimeout(resolve,10));
+    assert.match(calls[3].text,/查询失败：查询超时/);
+    for(let i=0;i<30&&store.listSmsDeliveries().items.some(item=>!['accepted','failed'].includes(item.status));i+=1)await new Promise(resolve=>setTimeout(resolve,10));
   } finally { store.close(); fs.rmSync(directory,{recursive:true,force:true}); }
 });
 

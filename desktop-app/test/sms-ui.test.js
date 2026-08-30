@@ -24,10 +24,17 @@ test('SMS notification card has explicit light-theme surfaces', () => {
 test('admin exposes phone binding management and public SMS service health', () => {
   const adminHtml = fs.readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');
   const adminJs = fs.readFileSync(new URL('../public/admin.js', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(adminHtml, /id="sms-binding-create"/);
   assert.match(adminHtml, /id="sms-binding-body"/);
   assert.match(adminHtml, /id="check-sms-health"/);
+  assert.match(adminHtml, /id="sms-confirm-dialog"/);
   assert.match(adminJs, /\/api\/v1\/admin\/sms\/bindings/);
+  assert.match(adminJs, /binding-run/);
+  assert.match(adminJs, /confirmed:true/);
+  assert.match(server, /SMS_CONFIRMATION_REQUIRED/);
+  assert.match(server, /adminSmsBindingRun/);
+  assert.match(server, /source: 'manual_sms'/);
   assert.match(app, /data\.sms\?\.status/);
   assert.match(app, /短信通知服务/);
 });

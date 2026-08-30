@@ -82,3 +82,20 @@ test('rejects new tasks when the bounded queue is full', () => {
   queue.running = true;
   assert.throws(() => queue.enqueue(request, { deviceId: 'device-a', source: 'test' }), error => error.code === 'QUEUE_FULL' && error.retryAfterMs === 60_000);
 });
+
+test('an explicitly forced admin test query bypasses recent-result deduplication but keeps queue limits', () => {
+  let created=null;
+  const store={
+    list:()=>[], getByRequestId:()=>({id:'request-duplicate'}), findRecentFingerprint:()=>({id:'fingerprint-duplicate'}),
+    createQuery:value=>{created=value;return value;}, getQuery:()=>null
+  };
+  const queue=new QueryQueue({
+    store,driver:{},logger:{info(){},warn(){},error(){}},broadcast(){},
+    config:{queueMax:10,dedupeWindowMs:120_000,estimatedTaskMs:60_000}
+  });
+  queue.running=true;
+  const result=queue.enqueue(request,{requestId:'sms-manual:test:1',deviceId:'device-a',source:'manual_sms',sourceIp:'127.0.0.1',userAgent:'test',force:true});
+  assert.equal(result.reused,false);
+  assert.equal(created.source,'manual_sms');
+  assert.equal(queue.pending.length,1);
+});

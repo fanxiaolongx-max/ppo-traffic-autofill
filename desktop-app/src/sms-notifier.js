@@ -389,6 +389,13 @@ export class SmsNotifier {
     });
   }
 
+  manualBinding(record) {
+    if (record?.source !== 'manual_sms') return null;
+    const match = String(record.requestId || '').match(/^sms-manual:([^:]+):\d+$/);
+    const binding = match ? this.store.getSmsBinding(match[1]) : null;
+    return binding?.status === 'verified' ? binding : null;
+  }
+
   handleTerminal(record) {
     if (!['success', 'failed'].includes(record?.status)) return 0;
     const settings = this.getConfig();
@@ -402,12 +409,19 @@ export class SmsNotifier {
       });
       if (delivery) created += 1;
     }
+    if (record.status === 'failed' && record.source === 'manual_sms') {
+      const binding = this.manualBinding(record);
+      if (binding && this.queueBindingResult(record, binding)) created += 1;
+    }
     if (record.status === 'success') {
+      const isPeriodic = record.source === 'scheduled_sms' || record.source === 'manual_sms';
       const bindings = record.source === 'scheduled_sms'
         ? [this.store.smsBindingByLastQueryId(record.id)].filter(Boolean)
+        : record.source === 'manual_sms'
+          ? [this.manualBinding(record)].filter(Boolean)
         : this.store.listVerifiedSmsBindings(record.fingerprint);
       for (const binding of bindings) {
-        const delivery = record.source === 'scheduled_sms'
+        const delivery = isPeriodic
           ? this.queuePeriodicResult(record, binding)
           : this.queueBindingResult(record, binding);
         if (delivery) created += 1;

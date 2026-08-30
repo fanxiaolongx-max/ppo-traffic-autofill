@@ -283,6 +283,11 @@ function requireAdmin(request) {
   return context;
 }
 
+function requireSmsConfirmation(payload) {
+  if (payload?.confirmed === true) return;
+  throw Object.assign(new Error('请二次确认本次短信配置操作'), { statusCode: 409, code: 'SMS_CONFIRMATION_REQUIRED' });
+}
+
 function cleanFeedback(payload) {
   const stripControls = value => String(value || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
   const content = stripControls(payload?.content);
@@ -451,7 +456,9 @@ export const server = http.createServer(async (request, response) => {
     if (request.method === 'PUT' && url.pathname === '/api/v1/admin/sms/config') {
       const context = requireAdmin(request);
       adminAuth.assertCsrf(request, context);
-      const result = smsNotifier.configure(await body(request));
+      const payload = await body(request);
+      requireSmsConfirmation(payload);
+      const result = smsNotifier.configure(payload);
       return json(response, 200, result);
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/sms/deliveries') {
@@ -478,6 +485,7 @@ export const server = http.createServer(async (request, response) => {
       const context = requireAdmin(request);
       adminAuth.assertCsrf(request, context);
       const payload = await body(request);
+      requireSmsConfirmation(payload);
       const record = store.getQuery(String(payload.queryId || ''));
       if (!record) return json(response, 404, { error: { code: 'NOT_FOUND', message: '查询记录不存在' } });
       return json(response, 201, smsNotifier.adminCreateBinding(record, payload));
@@ -486,16 +494,43 @@ export const server = http.createServer(async (request, response) => {
     if (request.method === 'PATCH' && adminSmsBinding) {
       const context = requireAdmin(request);
       adminAuth.assertCsrf(request, context);
-      const binding = smsNotifier.adminUpdateBinding(adminSmsBinding[1], await body(request));
+      const payload = await body(request);
+      requireSmsConfirmation(payload);
+      const binding = smsNotifier.adminUpdateBinding(adminSmsBinding[1], payload);
       return binding ? json(response, 200, binding) : json(response, 404, { error: { code: 'NOT_FOUND', message: '手机号绑定不存在' } });
     }
     if (request.method === 'DELETE' && adminSmsBinding) {
       const context = requireAdmin(request);
       adminAuth.assertCsrf(request, context);
+      requireSmsConfirmation(await body(request));
       const deleted = store.deleteSmsBinding(adminSmsBinding[1]);
       if (!deleted) return json(response, 404, { error: { code: 'NOT_FOUND', message: '手机号绑定不存在' } });
       logger.info('sms_binding_admin_deleted', { bindingId: adminSmsBinding[1], sourceIp: clientIp(request) });
       return json(response, 200, { deleted: true });
+    }
+    const adminSmsBindingRun = url.pathname.match(/^\/api\/v1\/admin\/sms\/bindings\/([^/]+)\/run$/);
+    if (request.method === 'POST' && adminSmsBindingRun) {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      requireSmsConfirmation(await body(request));
+      const binding = store.getSmsBinding(adminSmsBindingRun[1]);
+      if (!binding) return json(response, 404, { error: { code: 'NOT_FOUND', message: '手机号绑定不存在' } });
+      if (binding.status !== 'verified') return json(response, 409, { error: { code: 'SMS_BINDING_NOT_ACTIVE', message: '只有已启用的绑定才能手动查询并推送' } });
+      const sms = smsNotifier.getConfig();
+      if (!sms.enabled || !sms.tokenConfigured) return json(response, 503, { error: { code: 'SMS_NOT_CONFIGURED', message: '短信服务尚未启用或 Token 未配置' } });
+      const sourceQuery = store.getQuery(binding.queryId);
+      if (!sourceQuery?.request) return json(response, 409, { error: { code: 'SMS_SCHEDULE_SOURCE_MISSING', message: '绑定的原始查询不存在' } });
+      const timestamp = Date.now();
+      const result = queue.enqueue(sourceQuery.request, {
+        requestId: `sms-manual:${binding.id}:${timestamp}`, source: 'manual_sms',
+        sourceIp: binding.sourceIp, deviceId: binding.deviceId,
+        userAgent: 'PPO SMS admin manual test', force: true
+      });
+      logger.info('sms_binding_manual_run_queued', {
+        bindingId: binding.id, queryId: result.record.id, traceId: result.record.traceId,
+        sourceIp: clientIp(request), desktop: context.desktop
+      });
+      return json(response, 202, { accepted: true, queryId: result.record.id, traceId: result.record.traceId });
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/admin/logs') {
       requireAdmin(request);

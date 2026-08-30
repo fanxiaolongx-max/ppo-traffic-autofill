@@ -49,7 +49,7 @@ export class QueryQueue {
         code: 'CORE_MAINTENANCE', statusCode: 503, retryAfterMs: 5_000
       });
     }
-    if (meta.requestId) {
+    if (!meta.force && meta.requestId) {
       const existing = this.store.getByRequestId(meta.requestId, meta.deviceId);
       if (existing) {
         this.logger.info('query_dedupe_reused', { ...auditContext(existing), reason: 'request_id' });
@@ -58,7 +58,7 @@ export class QueryQueue {
     }
     const fingerprint = this.fingerprint(request);
     const since = new Date(Date.now() - this.config.dedupeWindowMs).toISOString();
-    const duplicate = this.store.findRecentFingerprint(fingerprint, since, meta.deviceId);
+    const duplicate = meta.force ? null : this.store.findRecentFingerprint(fingerprint, since, meta.deviceId);
     if (duplicate) {
       this.logger.info('query_dedupe_reused', { ...auditContext(duplicate), reason: 'fingerprint' });
       return { record: duplicate, reused: true };

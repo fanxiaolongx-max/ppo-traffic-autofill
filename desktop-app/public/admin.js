@@ -24,6 +24,19 @@ async function adminApi(path, options={}) {
   return data;
 }
 
+let smsConfirmationResolve=null;
+function finishSmsConfirmation(value) {
+  const resolve=smsConfirmationResolve; smsConfirmationResolve=null;
+  if($('#sms-confirm-dialog').open)$('#sms-confirm-dialog').close();
+  resolve?.(value);
+}
+function confirmSmsAction(title,description,confirmLabel='确认执行') {
+  if(smsConfirmationResolve)finishSmsConfirmation(false);
+  $('#sms-confirm-title').textContent=title; $('#sms-confirm-description').textContent=description;
+  $('#sms-confirm-submit').textContent=confirmLabel; $('#sms-confirm-dialog').showModal();
+  return new Promise(resolve=>{smsConfirmationResolve=resolve;});
+}
+
 async function adminAttachment(path) {
   const headers = { ...(token ? {'x-desktop-token':token} : {}), ...(state.csrfToken ? {'x-csrf-token':state.csrfToken} : {}) };
   const response = await fetch(path, { credentials:'same-origin', headers });
@@ -117,7 +130,7 @@ function renderSmsHealth(health={}) {
 }
 
 function renderSmsBindings(data,append=false) {
-  const rows=data.items.map(item=>`<tr data-binding-id="${escapeHtml(item.id)}"><td class="nowrap">${formatTime(item.createdAt)}</td><td><select class="binding-status"><option value="verified" ${item.status==='verified'?'selected':''}>${t('已启用')}</option><option value="paused" ${item.status==='paused'?'selected':''}>${t('已暂停')}</option>${!['verified','paused'].includes(item.status)?`<option value="${escapeHtml(item.status)}" selected>${escapeHtml(statusLabel(item.status))}</option>`:''}</select></td><td><input class="binding-phone mono" value="${escapeHtml(item.to)}"></td><td><span class="binding-days"><input type="number" min="1" max="365" value="${Math.max(1,Math.round(item.intervalHours/24))}"> ${getLanguage()==='en'?'days':'天'}</span></td><td class="mono">${escapeHtml(item.queryId)}</td><td><span class="mono">${escapeHtml(item.deviceId||'—')}</span><small class="muted block mono">${escapeHtml(item.sourceIp||'—')}</small></td><td class="nowrap">${formatTime(item.nextRunAt)}</td><td><div class="cell-action"><button class="binding-save" type="button">${t('保存')}</button><button class="binding-delete danger" type="button">${t('删除')}</button></div></td></tr>`).join('');
+  const rows=data.items.map(item=>`<tr data-binding-id="${escapeHtml(item.id)}"><td class="nowrap">${formatTime(item.createdAt)}</td><td><select class="binding-status"><option value="verified" ${item.status==='verified'?'selected':''}>${t('已启用')}</option><option value="paused" ${item.status==='paused'?'selected':''}>${t('已暂停')}</option>${!['verified','paused'].includes(item.status)?`<option value="${escapeHtml(item.status)}" selected>${escapeHtml(statusLabel(item.status))}</option>`:''}</select></td><td><input class="binding-phone mono" value="${escapeHtml(item.to)}"></td><td><span class="binding-days"><input type="number" min="1" max="365" value="${Math.max(1,Math.round(item.intervalHours/24))}"> ${getLanguage()==='en'?'days':'天'}</span></td><td class="mono">${escapeHtml(item.queryId)}</td><td><span class="mono">${escapeHtml(item.deviceId||'—')}</span><small class="muted block mono">${escapeHtml(item.sourceIp||'—')}</small></td><td class="nowrap">${formatTime(item.nextRunAt)}</td><td><div class="cell-action"><button class="binding-run" type="button" ${item.status==='verified'?'':'disabled'}>${getLanguage()==='en'?'Run & send':'查询并推送'}</button><button class="binding-save" type="button">${t('保存')}</button><button class="binding-delete danger" type="button">${t('删除')}</button></div></td></tr>`).join('');
   if(append)$('#sms-binding-body').insertAdjacentHTML('beforeend',rows);else $('#sms-binding-body').innerHTML=rows||`<tr><td colspan="8" class="muted">${getLanguage()==='en'?'No phone bindings':'暂无手机号绑定'}</td></tr>`;
   $('#sms-binding-total').textContent=getLanguage()==='en'?`${data.total} total`:`共 ${data.total} 条`; updatePager('#load-more-sms-bindings',data.hasMore,'加载更多绑定'); bindSmsBindingButtons();
 }
@@ -133,13 +146,24 @@ async function loadSmsBindings({append=false}={}) {
 function bindSmsBindingButtons() {
   document.querySelectorAll('[data-binding-id] .binding-save').forEach(button=>button.addEventListener('click',async()=>{
     const row=button.closest('[data-binding-id]'),message=$('#sms-binding-message'); message.classList.add('hidden'); button.disabled=true;
-    try { await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}`,{method:'PATCH',body:JSON.stringify({phone:row.querySelector('.binding-phone').value,status:row.querySelector('.binding-status').value,intervalHours:Number(row.querySelector('.binding-days input').value)*24})}); await loadSmsBindings(); }
+    const phone=row.querySelector('.binding-phone').value,status=row.querySelector('.binding-status').value,days=Number(row.querySelector('.binding-days input').value);
+    if(!await confirmSmsAction('确认修改手机号绑定',`手机号：${phone}\n状态：${statusLabel(status)}\n查询周期：${days} 天`,'确认修改')){button.disabled=false;return;}
+    try { await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}`,{method:'PATCH',body:JSON.stringify({phone,status,intervalHours:days*24,confirmed:true})}); await loadSmsBindings(); }
     catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');button.disabled=false;}
   }));
   document.querySelectorAll('[data-binding-id] .binding-delete').forEach(button=>button.addEventListener('click',async()=>{
-    const row=button.closest('[data-binding-id]'); if(!confirm(getLanguage()==='en'?'Delete this phone binding?':'确定删除这个手机号绑定吗？'))return;
-    try { await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}`,{method:'DELETE',body:'{}'}); await loadSmsBindings(); }
+    const row=button.closest('[data-binding-id]'),phone=row.querySelector('.binding-phone').value;
+    if(!await confirmSmsAction('确认删除手机号绑定',`将永久删除 ${phone} 的查询与推送配置。`,'确认删除'))return;
+    try { await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}`,{method:'DELETE',body:JSON.stringify({confirmed:true})}); await loadSmsBindings(); }
     catch(error){const message=$('#sms-binding-message');message.textContent=localizeError(error);message.classList.remove('hidden');}
+  }));
+  document.querySelectorAll('[data-binding-id] .binding-run').forEach(button=>button.addEventListener('click',async()=>{
+    const row=button.closest('[data-binding-id]'),phone=row.querySelector('.binding-phone').value,message=$('#sms-binding-message');
+    if(!await confirmSmsAction('确认立即查询并推送',`系统将立即为 ${phone} 创建一次真实 PPO 查询，并在完成后发送短信。任务仍按队列顺序执行。`,'确认查询并推送'))return;
+    button.disabled=true; message.classList.add('hidden');
+    try { const result=await adminApi(`/api/v1/admin/sms/bindings/${encodeURIComponent(row.dataset.bindingId)}/run`,{method:'POST',body:JSON.stringify({confirmed:true})}); message.textContent=`已进入查询队列：${result.traceId}`;message.classList.remove('hidden'); }
+    catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}
+    finally{button.disabled=false;}
   }));
 }
 
@@ -227,12 +251,13 @@ $('#refresh-overview').addEventListener('click',()=>Promise.all([loadOverview(),
 $('#feedback-filter').addEventListener('submit',event=>{event.preventDefault();loadFeedback();}); $('#load-more-feedback').addEventListener('click',()=>loadFeedback({append:true}));
 $('#check-core-update').addEventListener('click',()=>coreAction('check')); $('#install-core-update').addEventListener('click',()=>coreAction('update')); $('#rollback-core').addEventListener('click',()=>coreAction('rollback'));
 $('#add-sms-rule').addEventListener('click',()=>{state.smsRules.push({id:'',enabled:true,type:'document',matchValue:'',to:'',template:''});renderSmsRules();});
-$('#sms-config-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-message');message.classList.add('hidden');try{const rules=[...document.querySelectorAll('[data-sms-rule]')].map(row=>({id:row.querySelector('.sms-rule-id').value,enabled:row.querySelector('.sms-rule-enabled').checked,type:row.querySelector('.sms-rule-type').value,matchValue:row.querySelector('.sms-rule-match').value.trim(),to:row.querySelector('.sms-rule-to').value.trim(),template:row.querySelector('.sms-rule-template').value.trim()}));await adminApi('/api/v1/admin/sms/config',{method:'PUT',body:JSON.stringify({enabled:$('#sms-enabled').checked,apiUrl:$('#sms-api-url').value.trim(),healthUrl:$('#sms-health-url').value.trim(),token:$('#sms-token').value.trim(),clearToken:$('#sms-clear-token').checked,rules})});message.textContent=getLanguage()==='en'?'SMS settings saved.':'短信配置已保存。';message.classList.remove('hidden');await loadSmsConfig();}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
+$('#sms-config-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-message');message.classList.add('hidden');const enabled=$('#sms-enabled').checked,apiUrl=$('#sms-api-url').value.trim(),healthUrl=$('#sms-health-url').value.trim(),clearToken=$('#sms-clear-token').checked;const rules=[...document.querySelectorAll('[data-sms-rule]')].map(row=>({id:row.querySelector('.sms-rule-id').value,enabled:row.querySelector('.sms-rule-enabled').checked,type:row.querySelector('.sms-rule-type').value,matchValue:row.querySelector('.sms-rule-match').value.trim(),to:row.querySelector('.sms-rule-to').value.trim(),template:row.querySelector('.sms-rule-template').value.trim()}));if(!await confirmSmsAction('确认保存短信通知配置',`服务状态：${enabled?'启用':'停用'}\n短信接口：${apiUrl}\n健康接口：${healthUrl}\n匹配规则：${rules.length} 条${clearToken?'\n注意：将清除已保存 Token':''}`,'确认保存'))return;try{await adminApi('/api/v1/admin/sms/config',{method:'PUT',body:JSON.stringify({enabled,apiUrl,healthUrl,token:$('#sms-token').value.trim(),clearToken,rules,confirmed:true})});message.textContent=getLanguage()==='en'?'SMS settings saved.':'短信配置已保存。';message.classList.remove('hidden');await loadSmsConfig();}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
 $('#check-sms-health').addEventListener('click',async()=>{const button=$('#check-sms-health');button.disabled=true;try{renderSmsHealth(await adminApi('/api/v1/admin/sms/health-check',{method:'POST',body:'{}'}));await Promise.all([loadOverview(),loadServiceEvents()]);}finally{button.disabled=false;}});
-$('#sms-binding-create').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-binding-message');message.classList.add('hidden');try{await adminApi('/api/v1/admin/sms/bindings',{method:'POST',body:JSON.stringify({queryId:$('#sms-binding-query-id').value.trim(),phone:$('#sms-binding-phone').value.trim(),intervalHours:Number($('#sms-binding-days').value)*24})});event.target.reset();$('#sms-binding-days').value='7';await Promise.all([loadSmsBindings(),loadSmsDeliveries()]);}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
+$('#sms-binding-create').addEventListener('submit',async event=>{event.preventDefault();const message=$('#sms-binding-message'),queryId=$('#sms-binding-query-id').value.trim(),phone=$('#sms-binding-phone').value.trim(),days=Number($('#sms-binding-days').value);message.classList.add('hidden');if(!await confirmSmsAction('确认新增手机号绑定',`查询 ID：${queryId}\n手机号：+20 ${phone}\n查询周期：${days} 天\n新增后会立即发送当前查询结果。`,'确认新增'))return;try{await adminApi('/api/v1/admin/sms/bindings',{method:'POST',body:JSON.stringify({queryId,phone,intervalHours:days*24,confirmed:true})});event.target.reset();$('#sms-binding-days').value='7';await Promise.all([loadSmsBindings(),loadSmsDeliveries()]);}catch(error){message.textContent=localizeError(error);message.classList.remove('hidden');}});
 $('#sms-binding-filter').addEventListener('submit',event=>{event.preventDefault();loadSmsBindings();});
 $('#load-more-sms-bindings').addEventListener('click',()=>loadSmsBindings({append:true}));
 $('#load-more-sms-deliveries').addEventListener('click',()=>loadSmsDeliveries({append:true}));
+$('#sms-confirm-cancel').addEventListener('click',()=>finishSmsConfirmation(false)); $('#sms-confirm-close').addEventListener('click',()=>finishSmsConfirmation(false)); $('#sms-confirm-submit').addEventListener('click',()=>finishSmsConfirmation(true)); $('#sms-confirm-dialog').addEventListener('cancel',event=>{event.preventDefault();finishSmsConfirmation(false);});
 $('#log-filter').addEventListener('submit',event=>{event.preventDefault();loadLogs();}); $('#load-more-logs').addEventListener('click',()=>loadLogs({append:true})); $('#load-more-service-events').addEventListener('click',()=>loadServiceEvents({append:true})); document.querySelectorAll('[data-event]').forEach(button=>button.addEventListener('click',()=>{$('#log-event').value=button.dataset.event;loadLogs();})); document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>document.getElementById(button.dataset.close).close()));
 initializePreferences($('.header-actions'));
 window.addEventListener('ppo:languagechange',()=>{ if(state.auth)Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries()]).then(()=>applyTranslations()).catch(()=>{}); else showLogin({passwordConfigured:!$('#login-password').disabled}); });

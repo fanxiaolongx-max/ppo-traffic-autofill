@@ -20,6 +20,7 @@ on:
       - 'desktop-app/src/result-parser.js'
       - 'desktop-app/src/secret-store.js'
       - 'desktop-app/src/server.js'
+      - 'desktop-app/src/sms-scheduler.js'
       - 'desktop-app/src/sms-notifier.js'
       - 'desktop-app/src/validation.js'
       - 'desktop-app/scripts/package-core.mjs'

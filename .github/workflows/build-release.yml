@@ -65,7 +65,7 @@ jobs:
         id: prepare
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+          if [[ ( "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ) && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             current_version="$(node -p "require('./manifest.json').version")"
             previous_version="$(git show HEAD^:manifest.json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).version))" || true)"
             if [[ -n "${previous_version}" && "${current_version}" != "${previous_version}" ]]; then

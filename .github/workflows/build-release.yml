@@ -176,15 +176,48 @@ jobs:
         run: npx electron-builder --mac --universal --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Prepare macOS Keychain for code signing
+        if: env.SIGN_MAC_APP == 'true'
+        run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain"
+          KEYCHAIN_PASSWORD="temporary-ci-keychain-pass"
+          echo "${{ secrets.MAC_CSC_LINK }}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+
+          security import "${RUNNER_TEMP}/certificate.p12" \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${{ secrets.MAC_CSC_KEY_PASSWORD }}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/productbuild
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+
+          existing_keychains=$(security list-keychains -d user | tr -d '" \t' | xargs)
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" ${existing_keychains}
+
+          echo "CSC_KEYCHAIN=${KEYCHAIN_PATH}" >> "${GITHUB_ENV}"
+          rm -f "${RUNNER_TEMP}/certificate.p12"
       - name: Build signed universal DMG and ZIP
         if: env.SIGN_MAC_APP == 'true'
         run: npx electron-builder --mac --universal --publish never
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_KEYCHAIN: ${{ env.CSC_KEYCHAIN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Clean up Keychain
+        if: always() && env.SIGN_MAC_APP == 'true'
+        run: |
+          if [ -f "${RUNNER_TEMP}/build.keychain" ]; then
+            security delete-keychain "${RUNNER_TEMP}/build.keychain" || true
+          fi
       - name: Collect macOS release files
         shell: bash
         run: |

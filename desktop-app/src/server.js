@@ -323,6 +323,10 @@ function staticFile(requestPath, response) {
   const normalized = requestPath === '/' ? 'index.html' : (requestPath === '/admin' || requestPath === '/admin/') ? 'admin.html' : requestPath.replace(/^\/+/, '');
   const resolved = path.resolve(publicDir, normalized);
   if (!resolved.startsWith(`${publicDir}${path.sep}`) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) return false;
+  // These bundled assets are small. Read them directly from ASAR before sending
+  // headers: Electron 43 streams cache extracted temp paths that macOS can remove
+  // while the app is running, causing an unhandled ENOENT on later page loads.
+  const contents = fs.readFileSync(resolved);
   const type = resolved.endsWith('.html') ? 'text/html' : resolved.endsWith('.css') ? 'text/css' : resolved.endsWith('.js') ? 'text/javascript' : 'application/octet-stream';
   response.writeHead(200, {
     'content-type': `${type}; charset=utf-8`,
@@ -330,7 +334,7 @@ function staticFile(requestPath, response) {
     'pragma': 'no-cache',
     'expires': '0'
   });
-  fs.createReadStream(resolved).pipe(response);
+  response.end(contents);
   return true;
 }
 

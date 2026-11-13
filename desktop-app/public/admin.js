@@ -5,7 +5,7 @@ const hashToken = new URLSearchParams(location.hash.slice(1)).get('desktopToken'
 if (hashToken) sessionStorage.setItem('ppo-desktop-token', hashToken);
 const token = hashToken || sessionStorage.getItem('ppo-desktop-token') || '';
 if (hashToken) history.replaceState(null, '', '/admin');
-const state = { auth:null, csrfToken:'', overview:null, queries:[], queryCursor:'', feedback:[], feedbackCursor:'', logs:[], logCursor:'', serviceEvents:[], serviceCursor:'', smsRules:[], smsDeliveries:[], smsDeliveryCursor:'', smsBindings:[], smsBindingCursor:'', attachmentUrls:[], diagnosticUrls:[] };
+const state = { auth:null, csrfToken:'', overview:null, queries:[], queryCursor:'', feedback:[], feedbackCursor:'', logs:[], logCursor:'', serviceEvents:[], serviceCursor:'', smsRules:[], smsDeliveries:[], smsDeliveryCursor:'', smsBindings:[], smsBindingCursor:'', attachmentUrls:[], diagnosticUrls:[], apiKeys:[], latestGeneratedKey:'', latestGeneratedKeyId:'' };
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[char]); }
 function formatTime(value) { return value ? new Date(value).toLocaleString(getLanguage()==='en'?'en':'zh-CN') : '—'; }
@@ -178,6 +178,74 @@ async function loadSmsDeliveries({append=false}={}) {
   const data=await adminApi(`/api/v1/admin/sms/deliveries?${params}`); state.smsDeliveryCursor=data.nextCursor||''; state.smsDeliveries=append?[...state.smsDeliveries,...data.items]:data.items; renderSmsDeliveries(data,append);
 }
 
+function renderApiKeys() {
+  const english = getLanguage() === 'en';
+  const rows = (state.apiKeys || []).map(item => `
+    <tr data-api-key-id="${escapeHtml(item.id)}">
+      <td><strong>${escapeHtml(item.name)}</strong></td>
+      <td class="mono">${escapeHtml(item.preview)}</td>
+      <td class="nowrap">${formatTime(item.createdAt)}</td>
+      <td class="nowrap">${formatTime(item.lastUsedAt)}</td>
+      <td><span class="status ${item.isActive ? 'operational' : 'offline'}"><i></i>${item.isActive ? t('有效') : t('已撤销')}</span></td>
+      <td>
+        <div class="cell-action">
+          <button class="api-key-download" type="button" title="${t('下载预配置此 Key 的 Skill')}">${english ? 'Download Skill' : '下载对应 Skill'}</button>
+          <button class="api-key-delete danger" type="button">${t('删除')}</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+  const bodyEl = $('#api-key-body');
+  if (bodyEl) {
+    bodyEl.innerHTML = rows || `<tr><td colspan="6" class="muted">${english ? 'No API Keys. Click “Generate API Key” above.' : '暂无 API Key，请点击上方“生成 API Key”创建。'}</td></tr>`;
+    bindApiKeyButtons();
+  }
+}
+
+function bindApiKeyButtons() {
+  document.querySelectorAll('[data-api-key-id] .api-key-delete').forEach(button => button.addEventListener('click', async () => {
+    const row = button.closest('[data-api-key-id]');
+    const keyId = row.dataset.apiKeyId;
+    if (!confirm(getLanguage() === 'en' ? 'Revoke and delete this API Key?' : '确认撤销并删除该 API Key？使用此 Key 的其他项目将无法继续访问。')) return;
+    try {
+      await adminApi(`/api/v1/admin/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+      await loadApiKeys();
+    } catch (error) {
+      const msg = $('#api-key-message');
+      if (msg) {
+        msg.textContent = localizeError(error);
+        msg.classList.remove('hidden');
+      }
+    }
+  }));
+  document.querySelectorAll('[data-api-key-id] .api-key-download').forEach(button => button.addEventListener('click', () => {
+    const row = button.closest('[data-api-key-id]');
+    downloadSkillZip(row.dataset.apiKeyId);
+  }));
+}
+
+async function loadApiKeys() {
+  try {
+    const data = await adminApi('/api/v1/admin/api-keys');
+    state.apiKeys = data.items || [];
+    renderApiKeys();
+  } catch (error) {
+    console.error('Failed to load API keys:', error);
+  }
+}
+
+function downloadSkillZip(keyId = '') {
+  const params = new URLSearchParams();
+  if (keyId) params.set('keyId', keyId);
+  const url = `/api/v1/admin/skill/download?${params}`;
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'ppo-traffic-skill.zip';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function queryResultText(record) { return record.status==='success'?`${record.result?.totalFine||'0 جنيه'} · ${record.result?.violationCount||0} ${getLanguage()==='en'?'violations':'笔'}`:(record.error?.message||record.detail||record.step||'—'); }
 function renderQueries(data,append=false) {
   const rows=data.items.map(record=>`<tr><td class="nowrap">${formatTime(record.createdAt)}</td><td><span class="status ${escapeHtml(record.status)}"><i></i>${statusLabel(record.status)}</span></td><td><button class="search-value mono" data-search-log="${escapeHtml(requestSummary(record))}">${escapeHtml(requestSummary(record))}</button></td><td><button class="search-value mono" data-search-log="${escapeHtml(maskDocument(record.request?.documentNumber))}">${escapeHtml(record.request?.documentNumber||'—')}</button></td><td><button class="search-value mono" data-search-log="${escapeHtml(record.traceId)}">${escapeHtml(record.traceId)}</button></td><td><span class="mono">${escapeHtml(record.sourceIp||'—')}</span><small class="muted block">${escapeHtml(geoText(record.geo))}</small></td><td class="mono">${escapeHtml(record.deviceId||'—')}</td><td>${escapeHtml(queryResultText(record))}</td><td><div class="cell-action"><button data-query-id="${escapeHtml(record.id)}">详情</button><button data-search-log="${escapeHtml(record.traceId)}">日志</button></div></td></tr>`).join('');
@@ -239,7 +307,7 @@ async function showFeedback(id) {
 }
 
 function showLogin(auth) { $('#admin-content').classList.add('hidden'); $('#login-panel').classList.remove('hidden'); $('#login-hint').textContent=auth.passwordConfigured?t('请输入远程管理员密码。'):(getLanguage()==='en'?'No password is configured. Open Admin from the desktop GUI and select “Set password”.':'尚未设置密码。请先在桌面 GUI 的 Admin 页面点击“设置密码”。'); $('#login-password').disabled=!auth.passwordConfigured; $('#admin-live').className='live offline'; $('#admin-live').innerHTML=`<i></i>${t('需要登录')}`; }
-async function enterAdmin(auth) { state.auth=auth; state.csrfToken=auth.csrfToken||''; $('#login-panel').classList.add('hidden'); $('#admin-content').classList.remove('hidden'); $('#password-button').classList.remove('hidden'); $('#logout-button').classList.toggle('hidden',auth.desktop); $('#current-password-field').classList.toggle('hidden',auth.desktop); await Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries()]); }
+async function enterAdmin(auth) { state.auth=auth; state.csrfToken=auth.csrfToken||''; $('#login-panel').classList.add('hidden'); $('#admin-content').classList.remove('hidden'); $('#password-button').classList.remove('hidden'); $('#logout-button').classList.toggle('hidden',auth.desktop); $('#current-password-field').classList.toggle('hidden',auth.desktop); await Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries(),loadApiKeys()]); }
 async function initialize() { try { const auth=await adminApi('/api/v1/admin/auth/status'); if(auth.authenticated) await enterAdmin(auth); else showLogin(auth); } catch(error) { showLogin({passwordConfigured:false}); $('#login-message').textContent=localizeError(error); $('#login-message').classList.remove('hidden'); } }
 
 $('#login-form').addEventListener('submit',async event=>{event.preventDefault();const message=$('#login-message');message.classList.add('hidden');try{const result=await adminApi('/api/v1/admin/login',{method:'POST',body:JSON.stringify({password:$('#login-password').value})});await enterAdmin({authenticated:true,desktop:false,passwordConfigured:true,csrfToken:result.csrfToken});}catch(error){message.textContent=error.retryAfterMs?`${localizeError(error)} ${getLanguage()==='en'?`(about ${Math.ceil(error.retryAfterMs/1000)}s)`:`（约 ${Math.ceil(error.retryAfterMs/1000)} 秒）`}`:localizeError(error);message.classList.remove('hidden');}});
@@ -259,6 +327,52 @@ $('#load-more-sms-bindings').addEventListener('click',()=>loadSmsBindings({appen
 $('#load-more-sms-deliveries').addEventListener('click',()=>loadSmsDeliveries({append:true}));
 $('#sms-confirm-cancel').addEventListener('click',()=>finishSmsConfirmation(false)); $('#sms-confirm-close').addEventListener('click',()=>finishSmsConfirmation(false)); $('#sms-confirm-submit').addEventListener('click',()=>finishSmsConfirmation(true)); $('#sms-confirm-dialog').addEventListener('cancel',event=>{event.preventDefault();finishSmsConfirmation(false);});
 $('#log-filter').addEventListener('submit',event=>{event.preventDefault();loadLogs();}); $('#load-more-logs').addEventListener('click',()=>loadLogs({append:true})); $('#load-more-service-events').addEventListener('click',()=>loadServiceEvents({append:true})); document.querySelectorAll('[data-event]').forEach(button=>button.addEventListener('click',()=>{$('#log-event').value=button.dataset.event;loadLogs();})); document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>document.getElementById(button.dataset.close).close()));
+$('#create-api-key-button')?.addEventListener('click', () => {
+  const err = $('#api-key-create-error');
+  if (err) err.classList.add('hidden');
+  $('#api-key-create-form')?.reset();
+  $('#api-key-create-dialog')?.showModal();
+});
+$('#download-skill-btn')?.addEventListener('click', () => downloadSkillZip());
+$('#api-key-create-form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const err = $('#api-key-create-error');
+  if (err) err.classList.add('hidden');
+  const name = $('#api-key-name-input').value.trim();
+  try {
+    const item = await adminApi('/api/v1/admin/api-keys', {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+    state.latestGeneratedKey = item.key;
+    state.latestGeneratedKeyId = item.id;
+    $('#api-key-create-dialog')?.close();
+    $('#api-key-create-form')?.reset();
+    await loadApiKeys();
+    $('#api-key-result-value').value = item.key;
+    $('#api-key-result-dialog')?.showModal();
+  } catch (error) {
+    if (err) {
+      err.textContent = localizeError(error);
+      err.classList.remove('hidden');
+    }
+  }
+});
+$('#api-key-copy-btn')?.addEventListener('click', async () => {
+  const val = $('#api-key-result-value').value;
+  try {
+    await navigator.clipboard.writeText(val);
+    $('#api-key-copy-btn').textContent = getLanguage() === 'en' ? 'Copied!' : '已复制！';
+    setTimeout(() => { $('#api-key-copy-btn').textContent = getLanguage() === 'en' ? 'Copy Key' : '复制 Key'; }, 2000);
+  } catch {
+    $('#api-key-result-value').select();
+    document.execCommand('copy');
+  }
+});
+$('#api-key-download-skill-now')?.addEventListener('click', () => {
+  downloadSkillZip(state.latestGeneratedKeyId || '');
+});
+
 initializePreferences($('.header-actions'));
-window.addEventListener('ppo:languagechange',()=>{ if(state.auth)Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries()]).then(()=>applyTranslations()).catch(()=>{}); else showLogin({passwordConfigured:!$('#login-password').disabled}); });
+window.addEventListener('ppo:languagechange',()=>{ if(state.auth)Promise.all([loadOverview(),loadQueries(),loadFeedback(),loadLogs(),loadServiceEvents(),loadCoreStatus(),loadSmsConfig(),loadSmsBindings(),loadSmsDeliveries(),loadApiKeys()]).then(()=>applyTranslations()).catch(()=>{}); else showLogin({passwordConfigured:!$('#login-password').disabled}); });
 setInterval(()=>{if(state.auth&&!document.hidden)loadOverview().catch(()=>{});},10_000); initialize();

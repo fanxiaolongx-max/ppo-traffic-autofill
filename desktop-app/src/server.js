@@ -17,6 +17,7 @@ import { decodeFeedbackAttachments, feedbackAttachmentPath, saveFeedbackAttachme
 import { SecretStore } from './secret-store.js';
 import { SmsNotifier } from './sms-notifier.js';
 import { SmsScheduleRunner } from './sms-scheduler.js';
+import { createSkillPackage } from './skill-packager.js';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.logDir, { recursive: true });
@@ -255,12 +256,19 @@ function secureRequest(request) {
 }
 
 function isPrivileged(request) {
-  const key = String(request.headers['x-api-key'] || '');
-  if (!key || !config.apiKeys.size) return false;
-  return [...config.apiKeys].some(expected => {
-    const a = Buffer.from(key); const b = Buffer.from(expected);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
-  });
+  const headerKey = String(request.headers['x-api-key'] || '').trim();
+  const authHeader = String(request.headers.authorization || '').trim();
+  const bearerKey = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+  const key = headerKey || bearerKey;
+  if (!key) return false;
+  if (config.apiKeys.size) {
+    const matched = [...config.apiKeys].some(expected => {
+      const a = Buffer.from(key); const b = Buffer.from(expected);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    });
+    if (matched) return true;
+  }
+  return Boolean(store.verifyApiKey(key));
 }
 
 function isDesktopRequest(request) {
@@ -628,6 +636,60 @@ export const server = http.createServer(async (request, response) => {
       if (!item) return json(response, 404, { error: { code: 'NOT_FOUND', message: '反馈不存在' } });
       logger.info('feedback_status_updated', { feedbackId: item.id, status: item.status, sourceIp: clientIp(request) });
       return json(response, 200, item);
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/api-keys') {
+      requireAdmin(request);
+      return json(response, 200, { items: store.listApiKeys() });
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/admin/api-keys') {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const payload = await body(request);
+      const item = store.createApiKey({ name: payload.name });
+      logger.info('api_key_created', { keyId: item.id, name: item.name, sourceIp: clientIp(request), desktop: context.desktop });
+      return json(response, 201, item);
+    }
+    const adminApiKeyMatch = url.pathname.match(/^\/api\/v1\/admin\/api-keys\/([^/]+)$/);
+    if (request.method === 'DELETE' && adminApiKeyMatch) {
+      const context = requireAdmin(request);
+      adminAuth.assertCsrf(request, context);
+      const deleted = store.deleteApiKey(adminApiKeyMatch[1]);
+      if (!deleted) return json(response, 404, { error: { code: 'NOT_FOUND', message: 'API Key 不存在' } });
+      logger.info('api_key_deleted', { keyId: adminApiKeyMatch[1], sourceIp: clientIp(request), desktop: context.desktop });
+      return json(response, 200, { deleted: true });
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/admin/skill/download') {
+      requireAdmin(request);
+      const keyId = url.searchParams.get('keyId');
+      let apiKey = '';
+      if (keyId) {
+        const keyRecord = store.getApiKey(keyId);
+        if (keyRecord) apiKey = keyRecord.key;
+      }
+      if (!apiKey) {
+        const keys = store.listApiKeys();
+        if (keys.length > 0) {
+          const latest = store.getApiKey(keys[0].id);
+          apiKey = latest?.key || '';
+        }
+        if (!apiKey) {
+          const created = store.createApiKey({ name: 'Skill Default Key' });
+          apiKey = created.key;
+        }
+      }
+      const hostHeader = request.headers['x-forwarded-host'] || request.headers.host || `127.0.0.1:${boundPort}`;
+      const protoHeader = request.headers['x-forwarded-proto'] || (request.socket.encrypted ? 'https' : 'http');
+      const computedBaseUrl = config.publicBaseUrl || `${protoHeader}://${hostHeader}`;
+      const baseUrl = url.searchParams.get('baseUrl') || computedBaseUrl;
+      const zipBuffer = createSkillPackage({ baseUrl, apiKey });
+      response.writeHead(200, {
+        'content-type': 'application/zip',
+        'content-length': String(zipBuffer.length),
+        'content-disposition': 'attachment; filename="ppo-traffic-skill.zip"',
+        'cache-control': 'no-store'
+      });
+      response.end(zipBuffer);
+      return;
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/events') {
       const privileged = isPrivileged(request);

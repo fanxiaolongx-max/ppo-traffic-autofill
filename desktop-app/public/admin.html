@@ -21,6 +21,34 @@
         <p id="sms-binding-message" class="form-message hidden"></p><div class="table-wrap"><table><thead><tr><th>创建时间</th><th>状态</th><th>手机号</th><th>周期</th><th>查询 ID</th><th>设备 / IP</th><th>下次执行</th><th>操作</th></tr></thead><tbody id="sms-binding-body"></tbody></table></div><div class="pagination-bar"><span></span><button id="load-more-sms-bindings" class="load-more" type="button">加载更多绑定</button></div>
         <div class="section-head sms-history-head"><div><strong>最近短信投递</strong></div><span id="sms-delivery-total" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>时间</th><th>状态</th><th>匹配项</th><th>接收号码</th><th>追踪编号</th><th>接口结果</th></tr></thead><tbody id="sms-delivery-body"></tbody></table></div><div class="pagination-bar"><span></span><button id="load-more-sms-deliveries" class="load-more" type="button">加载更多投递</button></div>
       </section>
+      <section class="panel api-key-panel">
+        <div class="section-head">
+          <div><p class="eyebrow">DEVELOPER &amp; AGENT API</p><h2>API 开放平台与 Agent SKILL</h2></div>
+          <div class="cell-action">
+            <button id="create-api-key-button" class="primary" type="button">🔑 生成 API Key</button>
+            <button id="download-skill-btn" type="button">📦 下载 Agent SKILL 包 (.zip)</button>
+          </div>
+        </div>
+        <div class="api-key-intro">
+          <p class="muted">开放违章提交（<code>POST /api/v1/queries</code>）、进度轮询（<code>GET /api/v1/queries/:id</code>）、历史记录（<code>GET /api/v1/history</code>）与服务健康（<code>GET /api/v1/status</code>）。带有效 API Key 的请求自动享有豁免流控与白名单设备特权。点击“下载 Agent SKILL 包”可获取预配好当前服务地址与密钥的 Antigravity / Claude Code 扩展包。</p>
+        </div>
+        <p id="api-key-message" class="form-message hidden"></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>备注名称</th>
+                <th>API Key 预览</th>
+                <th>创建时间</th>
+                <th>最后调用</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="api-key-body"></tbody>
+          </table>
+        </div>
+      </section>
       <section class="panel"><div class="section-head"><div><p class="eyebrow">GLOBAL QUEUE</p><h2>全局实时队列</h2></div><button id="refresh-overview" type="button">刷新</button></div><div class="table-wrap"><table><thead><tr><th>位置</th><th>状态</th><th>车牌</th><th>完整证件</th><th>追踪编号</th><th>设备 / 来源 IP / 归属地</th><th>进度</th></tr></thead><tbody id="queue-body"></tbody></table></div></section>
       <section class="panel"><div class="section-head"><div><p class="eyebrow">ALL QUERIES</p><h2>所有查询记录</h2></div><span id="query-total" class="muted"></span></div><form id="query-filter" class="filter-bar"><input id="query-search" type="search" placeholder="搜索车牌、证件、追踪编号、设备 ID、IP、地区或浏览器"><select id="query-status"><option value="">全部状态</option><option value="queued">排队中</option><option value="running">执行中</option><option value="success">成功</option><option value="failed">失败</option><option value="cancelled">已取消</option><option value="interrupted">中断</option></select><button type="submit">搜索</button></form><div class="table-wrap"><table><thead><tr><th>本地时间</th><th>状态</th><th>车牌</th><th>完整证件</th><th>追踪编号</th><th>IP / 归属地</th><th>设备 ID</th><th>结果 / 错误</th><th>操作</th></tr></thead><tbody id="query-body"></tbody></table></div><div class="pagination-bar"><span id="query-page-summary" class="muted"></span><button id="load-more-queries" class="load-more" type="button">加载更多查询</button></div></section>
       <section class="panel feedback-panel"><div class="section-head"><div><p class="eyebrow">USER FEEDBACK</p><h2>用户建议与意见 <b id="feedback-unread" class="count-badge hidden">0</b></h2></div><span id="feedback-total" class="muted"></span></div><form id="feedback-filter" class="filter-bar"><input id="feedback-search" type="search" placeholder="搜索内容、手机号、微信、设备 ID、IP、地区"><select id="feedback-status"><option value="">全部反馈</option><option value="new">未读</option><option value="read">已读</option><option value="resolved">已处理</option><option value="archived">已归档</option></select><button type="submit">搜索</button></form><div class="table-wrap"><table><thead><tr><th>时间</th><th>状态</th><th>反馈内容</th><th>手机 / 微信</th><th>设备 ID</th><th>IP / 归属地</th><th>操作</th></tr></thead><tbody id="feedback-body"></tbody></table></div><div class="pagination-bar"><span id="feedback-page-summary" class="muted"></span><button id="load-more-feedback" class="load-more" type="button">加载更多反馈</button></div></section>
@@ -33,5 +61,7 @@
   <dialog id="password-dialog"><div class="dialog-head"><div><p class="eyebrow">SECURITY</p><h2>设置远程管理员密码</h2></div><button data-close="password-dialog" type="button">×</button></div><form id="password-form" class="password-form"><label id="current-password-field">当前密码<input id="current-password" type="password" maxlength="128" autocomplete="current-password"></label><label>新密码（至少 9 位）<input id="new-password" type="password" minlength="9" maxlength="128" autocomplete="new-password" required></label><label>确认新密码<input id="confirm-password" type="password" minlength="9" maxlength="128" autocomplete="new-password" required></label><button type="submit">保存并使旧会话失效</button><p id="password-message" class="form-message hidden"></p></form></dialog>
   <dialog id="log-dialog"><div class="dialog-head"><div><p class="eyebrow">LOG DETAIL</p><h2>单条日志原文</h2></div><button data-close="log-dialog" type="button">×</button></div><pre id="log-detail"></pre></dialog>
   <dialog id="sms-confirm-dialog" class="sms-confirm-dialog"><div class="dialog-head"><div><p class="eyebrow">SECOND CONFIRMATION</p><h2 id="sms-confirm-title">确认短信配置操作</h2></div><button id="sms-confirm-close" type="button">×</button></div><p id="sms-confirm-description"></p><p class="sms-confirm-warning">确认后将立即执行，请再次核对手机号、周期和操作内容。</p><div class="sms-confirm-actions"><button id="sms-confirm-cancel" type="button">取消</button><button id="sms-confirm-submit" type="button">确认执行</button></div></dialog>
+  <dialog id="api-key-create-dialog"><div class="dialog-head"><div><p class="eyebrow">NEW API KEY</p><h2>生成新 API Key</h2></div><button data-close="api-key-create-dialog" type="button">×</button></div><form id="api-key-create-form" class="api-key-create-form"><label>Key 备注名称<input id="api-key-name-input" maxlength="60" placeholder="例如：我的另一个项目 / 自动化 Agent" required></label><button type="submit">生成密钥</button><p id="api-key-create-error" class="form-message hidden"></p></form></dialog>
+  <dialog id="api-key-result-dialog" class="api-key-result-dialog"><div class="dialog-head"><div><p class="eyebrow">API KEY READY</p><h2>API Key 已生成</h2></div><button data-close="api-key-result-dialog" type="button">×</button></div><div class="api-key-result-content"><p class="muted">这是您生成的完整 API Key，请妥善保管。您也可以立即下载预配好的 Agent SKILL 包在其他项目中一键使用。</p><div class="api-key-box"><input id="api-key-result-value" class="mono" readonly><button id="api-key-copy-btn" type="button">复制 Key</button></div><div class="api-key-result-actions"><button id="api-key-download-skill-now" class="primary" type="button">📦 立即下载 Agent SKILL 包 (.zip)</button></div></div></dialog>
   <script type="module" src="/admin.js"></script>
 </body></html>

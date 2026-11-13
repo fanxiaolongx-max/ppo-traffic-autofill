@@ -29,3 +29,16 @@ dialog { width:min(94vw,900px); max-height:88vh; overflow:auto; padding:18px; bo
 .status.accepted i{background:var(--green)}.status.sending i,.status.queued i{background:var(--yellow)}.status.failed i{background:var(--red)}
 .sms-confirm-dialog{width:min(92vw,520px)}.sms-confirm-dialog>p{margin:0;line-height:1.55}#sms-confirm-description{white-space:pre-line}.sms-confirm-warning{margin-top:12px!important;padding:10px 11px;border:1px solid rgba(232,179,63,.35);border-radius:9px;background:rgba(232,179,63,.09);color:#f3d88d;font-size:11px}.sms-confirm-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}.sms-confirm-actions button{border:1px solid var(--line);border-radius:9px;padding:9px 15px;background:#172231;color:var(--text)}#sms-confirm-submit{border-color:#6c5724;background:#49380b;color:#ffe39a}
 @media(max-width:900px){.sms-rule{grid-template-columns:auto 1fr 1fr}.sms-rule textarea{grid-column:1/-1}.sms-rule button{grid-column:3}.sms-token-meta{align-items:flex-start;flex-direction:column}.sms-binding-create{grid-template-columns:1fr 1fr}.sms-binding-create button{grid-column:1/-1}.sms-binding-filter{grid-template-columns:1fr 150px}}
+.api-key-intro{margin-bottom:14px;padding:12px;border:1px solid var(--line);border-radius:11px;background:var(--panel2);line-height:1.6}
+.api-key-intro code{font-family:ui-monospace,Menlo,monospace;color:var(--gold);padding:2px 5px;border-radius:4px;background:#141f2d}
+.api-key-intro p{margin:0}
+.api-key-create-form{display:grid;gap:12px;margin-top:14px}
+.api-key-create-form label{display:grid;gap:6px;color:var(--muted);font-size:11px}
+.api-key-create-form input{height:38px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:#090f16;color:var(--text)}
+.api-key-create-form button{justify-self:end;padding:8px 14px;border:1px solid #6c5724;border-radius:9px;background:#302813;color:#f1cf70}
+.api-key-result-content{display:grid;gap:14px;margin-top:10px}
+.api-key-box{display:grid;grid-template-columns:1fr auto;gap:8px}
+.api-key-box input{height:38px;padding:0 10px;border:1px solid var(--gold);border-radius:9px;background:#090f16;color:var(--text);font-size:12px}
+.api-key-box button{padding:0 14px;border:1px solid var(--line);border-radius:9px;background:#172231;color:var(--text)}
+.api-key-result-actions{display:flex;justify-content:flex-end;gap:9px}
+.api-key-result-actions button{border:1px solid #6c5724;border-radius:9px;padding:9px 15px;background:#49380b;color:#ffe39a}

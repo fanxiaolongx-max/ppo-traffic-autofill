@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 function encodeCursor(value) {
@@ -188,6 +189,18 @@ export class Store {
         geo_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        raw_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_keys_created ON api_keys(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
     `);
     const columns = new Set(this.db.prepare('PRAGMA table_info(queries)').all().map(column => column.name));
     if (!columns.has('detail')) this.db.exec('ALTER TABLE queries ADD COLUMN detail TEXT');
@@ -885,5 +898,61 @@ export class Store {
       lastQueryId: row.last_query_id || null, lastResult, scheduleClaimedUntil: row.schedule_claimed_until || null,
       updatedAt: row.updated_at
     };
+  }
+
+  createApiKey({ name, rawKey = '' } = {}) {
+    const key = rawKey || `ppo_live_${crypto.randomBytes(24).toString('hex')}`;
+    const id = `apk_${crypto.randomUUID()}`;
+    const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+    const preview = `${key.slice(0, 12)}••••${key.slice(-4)}`;
+    const now = new Date().toISOString();
+    const cleanName = String(name || '').trim().slice(0, 80) || 'Default Key';
+    this.db.prepare(`INSERT INTO api_keys (id, name, key_prefix, key_hash, raw_key, created_at, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)`).run(id, cleanName, preview, keyHash, key, now);
+    return { id, name: cleanName, preview, key, createdAt: now, lastUsedAt: null, isActive: true };
+  }
+
+  listApiKeys() {
+    return this.db.prepare('SELECT id, name, key_prefix, created_at, last_used_at, is_active FROM api_keys ORDER BY created_at DESC')
+      .all()
+      .map(row => ({
+        id: row.id,
+        name: row.name,
+        preview: row.key_prefix,
+        createdAt: row.created_at,
+        lastUsedAt: row.last_used_at || null,
+        isActive: Boolean(row.is_active)
+      }));
+  }
+
+  getApiKey(id) {
+    const row = this.db.prepare('SELECT id, name, key_prefix, key_hash, raw_key, created_at, last_used_at, is_active FROM api_keys WHERE id = ?').get(id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      preview: row.key_prefix,
+      key: row.raw_key,
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at || null,
+      isActive: Boolean(row.is_active)
+    };
+  }
+
+  deleteApiKey(id) {
+    const result = this.db.prepare('DELETE FROM api_keys WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  verifyApiKey(candidateKey) {
+    if (!candidateKey || typeof candidateKey !== 'string') return false;
+    const keyHash = crypto.createHash('sha256').update(candidateKey).digest('hex');
+    const row = this.db.prepare('SELECT id, raw_key FROM api_keys WHERE key_hash = ? AND is_active = 1').get(keyHash);
+    if (!row) return false;
+    const a = Buffer.from(candidateKey);
+    const b = Buffer.from(row.raw_key);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+    this.db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
+    return true;
   }
 }
